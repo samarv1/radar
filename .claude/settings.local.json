@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(uv:*)",
+      "Bash(curl:*)",
+      "Bash(/Users/samarv/.local/bin/uv:*)"
+    ]
+  }
+}
