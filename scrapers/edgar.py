@@ -186,15 +186,17 @@ def parse_form_d_xml(xml_text: str) -> dict:
         def find_text(*tags):
             for tag in tags:
                 el = root.find(f".//{tag}")
-                if el is not None and el.text:
+                if el is not None and el.text and el.text.strip():
                     return el.text.strip()
             return None
 
         result["company_name"] = find_text("nameOfIssuer", "issuerName", "entityName")
         result["state"] = find_text("stateOrCountryDescription", "stateOfFormation", "stateOrCountry")
-        result["date_of_first_sale"] = find_text("dateOfFirstSale", "firstSaleDate")
+        # dateOfFirstSale is a container: <dateOfFirstSale><value>YYYY-MM-DD</value></dateOfFirstSale>
+        result["date_of_first_sale"] = find_text("dateOfFirstSale/value", "firstSaleDate")
         result["entity_type"] = find_text("entityType", "issuerEntityType")
-        result["industry_group"] = find_text("industryGroup", "industryGroupType")
+        # industryGroup is a container wrapping industryGroupType
+        result["industry_group"] = find_text("industryGroupType", "industryGroup")
 
         amount_str = find_text("totalAmountSold", "totalOfferingAmount", "amountSold")
         if amount_str:
@@ -320,13 +322,144 @@ def scrape(days_back: int = 90, limit: int = 2000, start_offset: int = 0):
     print(f"\nDone. inserted={inserted}, duplicates={skipped_duplicate}, excluded={skipped_excluded}, failed={failed}")
 
 
+def scrape_targeted(days_back: int = 90):
+    """
+    Targeted mode: for each accelerator_company with a known CIK, fetch
+    their filing history from data.sec.gov and upsert any Form D filings
+    from the last `days_back` days. Much faster than the broad scan and
+    surgically accurate — no fuzzy matching needed.
+    """
+    from db.connection import get_connection as _gc
+
+    cutoff = date.today() - timedelta(days=days_back)
+    SUBMISSIONS = "https://data.sec.gov/submissions/CIK{cik}.json"
+
+    conn = _gc()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, name, edgar_cik FROM accelerator_companies WHERE edgar_cik IS NOT NULL ORDER BY id"
+            )
+            companies = cur.fetchall()
+
+        print(f"Targeted scan: {len(companies)} companies with known CIKs (cutoff {cutoff})")
+        inserted = updated = skipped = failed = 0
+
+        for i, (acc_id, name, cik) in enumerate(companies):
+            cik_padded = cik.zfill(10)
+            url = SUBMISSIONS.format(cik=cik_padded)
+
+            try:
+                resp = requests.get(url, headers=HEADERS, timeout=20)
+                time.sleep(SLEEP)
+                if resp.status_code != 200:
+                    failed += 1
+                    continue
+                data = resp.json()
+            except Exception as e:
+                print(f"  [{name}] fetch error: {e}")
+                failed += 1
+                continue
+
+            filings = data.get("filings", {}).get("recent", {})
+            if not filings:
+                continue
+
+            forms = filings.get("form", [])
+            dates = filings.get("filingDate", [])
+            accessions = filings.get("accessionNumber", [])
+
+            for form, filed_str, accession_no in zip(forms, dates, accessions):
+                if form not in ("D", "D/A"):
+                    continue
+                try:
+                    filed = datetime.strptime(filed_str, "%Y-%m-%d").date()
+                except ValueError:
+                    continue
+                if filed < cutoff:
+                    continue
+
+                # Normalize accession: add dashes if missing
+                accession_no = accession_no.replace("-", "")
+                accession_no = f"{accession_no[:10]}-{accession_no[10:12]}-{accession_no[12:]}"
+
+                # Fetch XML for this filing
+                xml_text, raw_url = fetch_primary_xml(cik, accession_no)
+                if not xml_text:
+                    continue
+
+                parsed = parse_form_d_xml(xml_text)
+                company_name = parsed["company_name"] or name
+
+                date_of_first_sale = None
+                raw_dos = parsed.get("date_of_first_sale")
+                if raw_dos:
+                    try:
+                        date_of_first_sale = datetime.strptime(raw_dos[:10], "%Y-%m-%d").date()
+                    except ValueError:
+                        pass
+
+                filing_row = {
+                    "company_name": company_name,
+                    "state": parsed.get("state"),
+                    "date_filed": filed_str,
+                    "date_of_first_sale": date_of_first_sale,
+                    "amount_raised": parsed.get("amount_raised"),
+                    "industry_group": parsed.get("industry_group"),
+                    "entity_type": parsed.get("entity_type"),
+                    "accession_number": accession_no,
+                    "raw_url": raw_url,
+                    "accelerator_id": acc_id,
+                }
+
+                if upsert_filing_targeted(conn, filing_row):
+                    inserted += 1
+                    print(f"  [{name}] NEW filing {accession_no} filed {filed_str} amount={parsed.get('amount_raised')}")
+                else:
+                    # Update accelerator_id on existing record if not set
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            "UPDATE edgar_filings SET accelerator_id = %s WHERE accession_number = %s AND accelerator_id IS NULL",
+                            (acc_id, accession_no),
+                        )
+                    skipped += 1
+
+                conn.commit()
+
+    finally:
+        conn.close()
+
+    print(f"\nTargeted scan done. New filings: {inserted}, Already known: {skipped}, Failed: {failed}")
+
+
+def upsert_filing_targeted(conn, filing: dict) -> bool:
+    sql = """
+        INSERT INTO edgar_filings
+            (company_name, state, date_filed, date_of_first_sale, amount_raised,
+             industry_group, entity_type, accession_number, raw_url, accelerator_id)
+        VALUES
+            (%(company_name)s, %(state)s, %(date_filed)s, %(date_of_first_sale)s,
+             %(amount_raised)s, %(industry_group)s, %(entity_type)s,
+             %(accession_number)s, %(raw_url)s, %(accelerator_id)s)
+        ON CONFLICT (accession_number) DO NOTHING
+        RETURNING id
+    """
+    with conn.cursor() as cur:
+        cur.execute(sql, filing)
+        return cur.fetchone() is not None
+
+
 if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser()
+    parser.add_argument("--mode", choices=["broad", "targeted"], default="broad")
     parser.add_argument("--days", type=int, default=90)
-    parser.add_argument("--limit", type=int, default=2000, help="Max non-fund stubs to process")
-    parser.add_argument("--from-offset", type=int, default=0, help="Start scanning from this EFTS offset")
+    parser.add_argument("--limit", type=int, default=2000, help="Max non-fund stubs (broad mode)")
+    parser.add_argument("--from-offset", type=int, default=0, help="EFTS start offset (broad mode)")
     args = parser.parse_args()
 
-    scrape(days_back=args.days, limit=args.limit, start_offset=args.from_offset)
+    if args.mode == "targeted":
+        scrape_targeted(days_back=args.days)
+    else:
+        scrape(days_back=args.days, limit=args.limit, start_offset=args.from_offset)
