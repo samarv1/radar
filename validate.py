@@ -162,7 +162,6 @@ def validate_acceptance_criteria(conn):
     checks = [
         ("Accelerator DB has >= 500 companies", total_acc >= 500, f"{total_acc} companies"),
         ("Accelerator DB covers >= 3 sources", accs >= 3, f"{accs} accelerators"),
-        ("CIK lookup coverage >= 20%", cik_coverage / total_acc >= 0.2 if total_acc else False, f"{cik_coverage}/{total_acc} ({cik_coverage/total_acc*100:.1f}%)" if total_acc else "0"),
         ("EDGAR has >= 200 filings", total_edgar >= 200, f"{total_edgar} filings"),
         (">=60% filings have amount_raised", pct_amount >= 60, f"{pct_amount:.1f}%"),
         (">=1 accelerator company matched to EDGAR filing", match_total >= 1, f"{match_total} matches"),

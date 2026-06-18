@@ -30,39 +30,57 @@ HEADERS = {
 SLEEP = 0.2
 
 
-def fetch_all_companies() -> list[dict]:
+def fetch_all_batches() -> list[str]:
+    """Get all unique batch names from Algolia facets."""
+    payload = {
+        "query": "",
+        "hitsPerPage": 0,
+        "facets": ["batch"],
+    }
+    resp = requests.post(ALGOLIA_URL, json=payload, headers=HEADERS, timeout=30)
+    time.sleep(SLEEP)
+    if resp.status_code != 200:
+        raise RuntimeError(f"Algolia facet fetch failed: {resp.status_code}")
+    facets = resp.json().get("facets", {}).get("batch", {})
+    batches = sorted(facets.keys())
+    print(f"Found {len(batches)} batches: {batches}")
+    return batches
+
+
+def fetch_batch(batch: str) -> list[dict]:
+    """Fetch all companies in a specific batch, bypassing the 1000-result global cap."""
     companies = []
     page = 0
-    total_pages = None
-
     while True:
         payload = {
             "query": "",
             "hitsPerPage": 1000,
             "page": page,
+            "filters": f'batch:"{batch}"',
             "attributesToRetrieve": ["name", "batch", "one_liner", "website", "tags", "slug"],
         }
-
         resp = requests.post(ALGOLIA_URL, json=payload, headers=HEADERS, timeout=30)
         time.sleep(SLEEP)
-
         if resp.status_code != 200:
-            print(f"Algolia error {resp.status_code}: {resp.text[:200]}")
+            print(f"  Algolia error {resp.status_code} for batch '{batch}'")
             break
-
         data = resp.json()
         hits = data.get("hits", [])
-        if total_pages is None:
-            total_pages = data.get("nbPages", 1)
-            print(f"YC directory: {data.get('nbHits', '?')} companies across {total_pages} pages")
-
         companies.extend(hits)
-        print(f"  Page {page + 1}/{total_pages}: {len(hits)} companies")
-
-        page += 1
-        if page >= total_pages:
+        if page == 0:
+            print(f"  Batch '{batch}': {data.get('nbHits', '?')} companies")
+        if len(hits) < 1000:
             break
+        page += 1
+    return companies
 
+
+def fetch_all_companies() -> list[dict]:
+    batches = fetch_all_batches()
+    companies = []
+    for batch in batches:
+        companies.extend(fetch_batch(batch))
+    print(f"\nTotal companies fetched across all batches: {len(companies)}")
     return companies
 
 

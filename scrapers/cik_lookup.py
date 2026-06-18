@@ -38,11 +38,13 @@ LEGAL_SUFFIXES = re.compile(
     r"holdings|capital|partners|fund|management|pbc)\b",
     re.IGNORECASE,
 )
+TICKER = re.compile(r"\s*\([A-Z][A-Z0-9\s,]*\)")  # strips "(ABNB)", "(RGTI, RGTIW)", etc.
 PUNCTUATION = re.compile(r"[^\w\s]")
 WHITESPACE = re.compile(r"\s+")
 
 
 def normalize(name: str) -> str:
+    name = TICKER.sub("", name)  # remove stock tickers before lowercasing
     name = name.lower()
     name = PUNCTUATION.sub(" ", name)
     name = LEGAL_SUFFIXES.sub(" ", name)
@@ -116,14 +118,25 @@ def run(limit: int = 500, refetch_fuzzy: bool = False):
     conn = get_connection()
     try:
         with conn.cursor() as cur:
+            order = """
+                ORDER BY
+                  CASE
+                    WHEN CAST(SUBSTRING(batch FROM '\\d{4}') AS INTEGER) BETWEEN 2022 AND 2025 THEN 0
+                    WHEN CAST(SUBSTRING(batch FROM '\\d{4}') AS INTEGER) < 2022 THEN 1
+                    ELSE 2
+                  END,
+                  CAST(SUBSTRING(batch FROM '\\d{4}') AS INTEGER) DESC NULLS LAST,
+                  CASE WHEN batch LIKE 'Summer%%' THEN 1 ELSE 0 END DESC,
+                  id
+            """
             if refetch_fuzzy:
                 cur.execute(
-                    "SELECT id, name FROM accelerator_companies WHERE edgar_cik IS NULL OR cik_confidence = 'fuzzy' ORDER BY id LIMIT %s",
+                    f"SELECT id, name FROM accelerator_companies WHERE edgar_cik IS NULL OR cik_confidence = 'fuzzy' {order} LIMIT %s",
                     (limit,),
                 )
             else:
                 cur.execute(
-                    "SELECT id, name FROM accelerator_companies WHERE edgar_cik IS NULL ORDER BY id LIMIT %s",
+                    f"SELECT id, name FROM accelerator_companies WHERE edgar_cik IS NULL {order} LIMIT %s",
                     (limit,),
                 )
             companies = cur.fetchall()

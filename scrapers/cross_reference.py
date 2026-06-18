@@ -50,19 +50,15 @@ def load_edgar_companies(conn) -> list[tuple[int, str, str]]:
 def load_yc_companies(conn) -> list[tuple[int, str, str]]:
     """Returns list of (id, original_name, normalized_name)."""
     with conn.cursor() as cur:
-        cur.execute("SELECT id, name FROM yc_companies")
+        cur.execute("SELECT id, name FROM accelerator_companies")
         rows = cur.fetchall()
     return [(row[0], row[1], normalize(row[1])) for row in rows]
 
 
-def upsert_match(conn, edgar_id: int, yc_id: int, score: float):
-    sql = """
-        INSERT INTO matches (edgar_id, yc_id, match_score)
-        VALUES (%s, %s, %s)
-        ON CONFLICT (edgar_id, yc_id) DO UPDATE SET match_score = EXCLUDED.match_score
-    """
+def upsert_match(conn, edgar_id: int, accelerator_id: int, score: float):
+    sql = "UPDATE edgar_filings SET accelerator_id = %s WHERE id = %s"
     with conn.cursor() as cur:
-        cur.execute(sql, (edgar_id, yc_id, score))
+        cur.execute(sql, (accelerator_id, edgar_id))
 
 
 def run():
@@ -88,27 +84,28 @@ def run():
             if not edgar_norm.strip():
                 continue
 
-            # rapidfuzz: find best match against all YC normalized names
-            results = process.extract(
+            # Take only the single best match per filing
+            result = process.extractOne(
                 edgar_norm,
                 yc_names_norm,
                 scorer=fuzz.token_sort_ratio,
-                limit=5,
                 score_cutoff=MATCH_THRESHOLD,
             )
+            if not result:
+                continue
 
-            for matched_norm, score, idx in results:
-                yc_id = yc_ids[idx]
-                yc_orig = yc_names_orig[idx]
-                upsert_match(conn, edgar_id, yc_id, score)
-                total_matches += 1
+            matched_norm, score, idx = result
+            accelerator_id = yc_ids[idx]
+            acc_orig = yc_names_orig[idx]
 
-                flag = ""
-                if score <= AMBIGUOUS_ZONE_MAX:
-                    flag = " [REVIEW]"
-                    ambiguous.append((score, edgar_orig, yc_orig))
+            if score <= AMBIGUOUS_ZONE_MAX:
+                ambiguous.append((score, edgar_orig, acc_orig))
+                print(f"  Skipped ambiguous (score={score:.0f}): '{edgar_orig}' <-> '{acc_orig}' [REVIEW]")
+                continue
 
-                print(f"  Match (score={score:.0f}){flag}: '{edgar_orig}' <-> '{yc_orig}'")
+            upsert_match(conn, edgar_id, accelerator_id, score)
+            total_matches += 1
+            print(f"  Match (score={score:.0f}): '{edgar_orig}' <-> '{acc_orig}'")
 
         conn.commit()
 

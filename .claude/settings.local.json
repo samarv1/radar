@@ -3,7 +3,16 @@
     "allow": [
       "Bash(uv:*)",
       "Bash(curl:*)",
-      "Bash(/Users/samarv/.local/bin/uv:*)"
+      "Bash(/Users/samarv/.local/bin/uv:*)",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); [print\\(k\\) for k in d.keys\\(\\)]\")",
+      "Bash(python3 -c \"import sys; html=sys.stdin.read\\(\\); import re; matches=re.findall\\(r'\\\\\"slug\\\\\":\\\\\"\\([^\\\\\"]+\\)\\\\\"', html\\); print\\('\\\\n'.join\\(matches[:20]\\)\\)\")",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(list\\(d.get\\('namespaces',[]\\)\\)\\); print\\(d.get\\('description',''\\)\\)\")",
+      "Bash(python3 -c \"import json,sys; print\\(json.dumps\\(json.load\\(sys.stdin\\), indent=2\\)[:500]\\)\")",
+      "Bash(python3 -c \"import json,sys; print\\(json.dumps\\(json.load\\(sys.stdin\\)[:2], indent=2\\)\\)\")",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(type\\(d\\), str\\(d\\)[:200]\\)\")",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(d[0].get\\('id'\\) if d else 'not found'\\)\")",
+      "Bash(python3 -c \"import json,sys; print\\(json.load\\(sys.stdin\\)\\)\")",
+      "Bash(python3 -c ' *)"
     ]
   }
 }
