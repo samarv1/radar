@@ -16,6 +16,8 @@ Usage:
 import re
 import sys
 import time
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 from rapidfuzz import fuzz
@@ -114,7 +116,56 @@ def store_cik(conn, company_id: int, cik: str, confidence: str):
         )
 
 
-def run(limit: int = 500, refetch_fuzzy: bool = False):
+_print_lock = threading.Lock()
+_counters = {"exact": 0, "fuzzy": 0, "not_found": 0, "failed": 0}
+_counter_lock = threading.Lock()
+
+
+def _lookup_one(args):
+    company_id, name, total, idx = args
+    try:
+        candidates = search_edgar(name)
+        if not candidates:
+            with _counter_lock:
+                _counters["not_found"] += 1
+            with _print_lock:
+                print(f"[{idx}/{total}] {name} — not found")
+            return
+
+        cik, matched_name, score = best_match(name, candidates)
+
+        if score >= EXACT_THRESHOLD:
+            confidence = "exact"
+        elif score >= FUZZY_THRESHOLD:
+            confidence = "fuzzy"
+        else:
+            with _counter_lock:
+                _counters["not_found"] += 1
+            with _print_lock:
+                print(f"[{idx}/{total}] {name} — no confident match (best={score:.0f} → '{matched_name}')")
+            return
+
+        conn = get_connection()
+        try:
+            store_cik(conn, company_id, cik, confidence)
+            conn.commit()
+        finally:
+            conn.close()
+
+        with _counter_lock:
+            _counters[confidence] += 1
+        with _print_lock:
+            tag = "[REVIEW]" if confidence == "fuzzy" else ""
+            print(f"[{idx}/{total}] {name} — {confidence} (score={score:.0f}) CIK={cik} → '{matched_name}' {tag}")
+
+    except Exception as e:
+        with _counter_lock:
+            _counters["failed"] += 1
+        with _print_lock:
+            print(f"[{idx}/{total}] {name} — error: {e}")
+
+
+def run(limit: int = 500, refetch_fuzzy: bool = False, workers: int = 5):
     conn = get_connection()
     try:
         with conn.cursor() as cur:
@@ -140,39 +191,18 @@ def run(limit: int = 500, refetch_fuzzy: bool = False):
                     (limit,),
                 )
             companies = cur.fetchall()
-
-        print(f"Looking up CIKs for {len(companies)} companies...")
-        exact = fuzzy_count = not_found = failed = 0
-
-        for i, (company_id, name) in enumerate(companies):
-            print(f"[{i+1}/{len(companies)}] {name}", end="")
-
-            candidates = search_edgar(name)
-            if not candidates:
-                print(" — not found")
-                not_found += 1
-                continue
-
-            cik, matched_name, score = best_match(name, candidates)
-
-            if score >= EXACT_THRESHOLD:
-                store_cik(conn, company_id, cik, "exact")
-                conn.commit()
-                exact += 1
-                print(f" — exact (score={score:.0f}) CIK={cik} → '{matched_name}'")
-            elif score >= FUZZY_THRESHOLD:
-                store_cik(conn, company_id, cik, "fuzzy")
-                conn.commit()
-                fuzzy_count += 1
-                print(f" — fuzzy (score={score:.0f}) CIK={cik} → '{matched_name}' [REVIEW]")
-            else:
-                print(f" — no confident match (best={score:.0f} → '{matched_name}')")
-                not_found += 1
-
     finally:
         conn.close()
 
-    print(f"\nDone. Exact: {exact}, Fuzzy: {fuzzy_count}, Not found: {not_found}, Failed: {failed}")
+    total = len(companies)
+    print(f"Looking up CIKs for {total} companies with {workers} parallel workers...")
+
+    args = [(company_id, name, total, i + 1) for i, (company_id, name) in enumerate(companies)]
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        list(executor.map(_lookup_one, args))
+
+    print(f"\nDone. Exact: {_counters['exact']}, Fuzzy: {_counters['fuzzy']}, Not found: {_counters['not_found']}, Failed: {_counters['failed']}")
     print(f"Run with --refetch-fuzzy to retry fuzzy matches after manual review.")
 
 
@@ -182,6 +212,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--limit", type=int, default=500)
     parser.add_argument("--refetch-fuzzy", action="store_true")
+    parser.add_argument("--workers", type=int, default=5)
     args = parser.parse_args()
 
-    run(limit=args.limit, refetch_fuzzy=args.refetch_fuzzy)
+    run(limit=args.limit, refetch_fuzzy=args.refetch_fuzzy, workers=args.workers)

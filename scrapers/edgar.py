@@ -31,8 +31,16 @@ HEADERS = {
 # Form D `items` values that indicate pooled investment funds/hedge funds
 FUND_ITEMS = {"06b", "3c", "3c.1", "3c.7"}
 
-# Industry group strings to exclude (from XML)
-EXCLUDED_INDUSTRY_GROUPS = {"Pooled Investment Fund", "Real Estate"}
+# Industry group strings to exclude (from XML) — substring match, case-insensitive
+EXCLUDED_INDUSTRY_GROUPS = {
+    "Pooled Investment Fund",
+    "Real Estate",
+    "Residential",
+    "Oil and Gas",
+    "Investing",
+    "Banking",  # catches "Commercial Banking", "Other Banking and Financial Services"
+    "REITS",
+}
 
 SLEEP = 0.15
 
