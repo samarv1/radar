@@ -35,3 +35,37 @@ CREATE INDEX IF NOT EXISTS idx_accelerator_companies_cik ON accelerator_companie
 
 CREATE INDEX IF NOT EXISTS idx_edgar_filings_accelerator ON edgar_filings(accelerator_id)
     WHERE accelerator_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS ph_launches (
+    id SERIAL PRIMARY KEY,
+    ph_id TEXT UNIQUE NOT NULL,
+    product_name TEXT NOT NULL,
+    tagline TEXT,
+    ph_url TEXT,
+    website TEXT,
+    votes_count INT,
+    launched_at TIMESTAMPTZ,
+    maker_name TEXT,
+    maker_twitter TEXT,
+    accelerator_id INT REFERENCES accelerator_companies(id),
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ph_launches_accelerator ON ph_launches(accelerator_id)
+    WHERE accelerator_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS funding_news (
+    id SERIAL PRIMARY KEY,
+    company_name TEXT NOT NULL,
+    amount_usd NUMERIC,
+    round_type TEXT,                 -- 'Seed', 'Series A', etc.
+    article_title TEXT NOT NULL,
+    article_url TEXT UNIQUE NOT NULL,
+    published_at TIMESTAMPTZ,
+    source TEXT NOT NULL DEFAULT 'techcrunch',
+    accelerator_id INT REFERENCES accelerator_companies(id),
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_funding_news_accelerator ON funding_news(accelerator_id)
+    WHERE accelerator_id IS NOT NULL;
