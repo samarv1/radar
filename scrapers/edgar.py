@@ -397,6 +397,8 @@ def scrape_targeted(days_back: int = 90):
                     continue
 
                 parsed = parse_form_d_xml(xml_text)
+                if is_excluded_by_xml(parsed):
+                    continue
                 company_name = parsed["company_name"] or name
 
                 date_of_first_sale = None
