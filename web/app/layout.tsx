@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Startup Feed",
+  title: "Radar",
   description: "Recently funded startups before they post jobs.",
 };
 

@@ -259,14 +259,19 @@ def try_ashby(slug: str) -> tuple[list[dict], str] | None:
 
 # --- DB helpers ---
 
-def get_matched_companies(conn) -> list[dict]:
+def get_pending_companies(conn, rescrape_after_days: int | None = None) -> list[dict]:
+    if rescrape_after_days is not None:
+        staleness = f"OR a.careers_scraped_at < NOW() - INTERVAL '{rescrape_after_days} days'"
+    else:
+        staleness = ""
     with conn.cursor() as cur:
-        cur.execute("""
+        cur.execute(f"""
             SELECT DISTINCT a.id, a.name, a.website
             FROM accelerator_companies a
             JOIN edgar_filings e ON e.accelerator_id = a.id
             WHERE a.is_excluded = FALSE
               AND (e.amount_raised IS NULL OR e.amount_raised <= 100000000)
+              AND (a.careers_scraped_at IS NULL {staleness})
             ORDER BY a.id
         """)
         return [{"id": r[0], "name": r[1], "website": r[2]} for r in cur.fetchall()]
@@ -305,14 +310,14 @@ def update_careers_status(conn, company_id: int, ats: str, url: str | None):
 
 # --- Main ---
 
-def scrape(limit: int | None = None):
+def scrape(limit: int | None = None, rescrape_after_days: int | None = None):
     conn = get_connection()
     try:
-        companies = get_matched_companies(conn)
+        companies = get_pending_companies(conn, rescrape_after_days)
         if limit:
             companies = companies[:limit]
 
-        print(f"Scraping careers for {len(companies)} EDGAR-matched companies...\n")
+        print(f"Scraping careers for {len(companies)} companies (new or stale)...\n")
 
         found = not_found = 0
 

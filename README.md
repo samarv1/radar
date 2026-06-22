@@ -30,17 +30,17 @@ The tool aggregates multiple free public signals into a single feed:
 
 ## Data Sources
 
-| Source | Method | Cost |
-|--------|--------|------|
-| SEC EDGAR Form D | EDGAR full-text search + submissions API | Free |
-| Y Combinator | Scrape `ycombinator.com/companies` | Free |
-| a16z | RSS + portfolio page | Free |
-| Sequoia | WordPress REST API | Free |
-| Pear VC | Portfolio page scrape | Free |
-| Lightspeed | Embedded JS + sitemap | Free |
-| Techstars | Typesense API (public token) | Free |
-| Product Hunt | GraphQL API (requires free dev token) | Free |
-| TechCrunch | WordPress REST API | Free |
+| Source | Method |
+|--------|--------|
+| SEC EDGAR Form D | EDGAR full-text search + submissions API |
+| Y Combinator | Scrape `ycombinator.com/companies` |
+| a16z | RSS + portfolio page |
+| Sequoia | WordPress REST API |
+| Pear VC | Portfolio page scrape |
+| Lightspeed | Embedded JS + sitemap |
+| Techstars | Typesense API (public token) |
+| Product Hunt | GraphQL API (requires free dev token) |
+| TechCrunch | WordPress REST API |
 
 ---
 
@@ -62,48 +62,41 @@ TechCrunch WP API ────────────────────�
 
 All data lives in Postgres. `validate.py` checks data quality and acceptance criteria.
 
+The frontend is a Next.js app (`web/`) that reads directly from the same Postgres database and renders a filterable feed of companies.
+
 ---
 
-## Setup
+## Deployment
 
+The pipeline runs automatically via GitHub Actions:
+
+- **Daily (7am UTC):** EDGAR → CIK lookup → cross-reference → careers → Product Hunt → TechCrunch
+- **Monday:** Re-scrapes all accelerator directories (YC, a16z, Sequoia, Lightspeed, Pear, Techstars) + full PH backfill
+
+The database is hosted on Railway. GitHub Actions connects via the public Railway URL stored as `DATABASE_URL` in repo secrets.
+
+To trigger a run manually:
 ```bash
-# Install dependencies
-uv sync
-
-# Copy and fill in env vars
-cp .env.example .env
-
-# Run migrations
-uv run python db/migrate_v2.py
-uv run python db/migrate_v3.py
-uv run python db/migrate_v4.py
+gh workflow run pipeline.yml -f mode=daily   # or: weekly, yc, a16z, sequoia, lightspeed, pear, techstars
 ```
 
-## Running the Pipeline
+---
 
+## Local Setup
+
+**Pipeline:**
 ```bash
-# 1. Scrape accelerator/VC directories
-uv run python scrapers/yc.py
-uv run python scrapers/a16z.py
-uv run python scrapers/sequoia.py
-uv run python scrapers/pear.py
-uv run python scrapers/lightspeed.py
-uv run python scrapers/techstars.py
+uv sync
+cp .env.example .env   # set DATABASE_URL (Railway public URL) and PH_API_TOKEN
 
-# 2. Look up EDGAR CIKs for all companies
-uv run python scrapers/cik_lookup.py --limit 10000 --workers 5
-
-# 3. Pull EDGAR filings (targeted = precise, broad = wider net)
-uv run python scrapers/edgar.py --mode targeted
-uv run python scrapers/edgar.py --mode broad
-
-# 4. Cross-reference broad scan results by name
-uv run python scrapers/cross_reference.py
-
-# 5. Enrichment signals
-uv run python scrapers/producthunt.py
-uv run python scrapers/techcrunch.py
-
-# 6. Validate data quality
+uv run python main.py --mode daily
+uv run python main.py --mode weekly
 uv run python validate.py
+```
+
+**Frontend:**
+```bash
+cd web
+npm install
+npm run dev   # reads DATABASE_URL from ../.env
 ```
