@@ -126,7 +126,8 @@ def validate_matches(conn):
             e.industry_group
         FROM edgar_filings e
         JOIN accelerator_companies a ON e.accelerator_id = a.id
-        WHERE e.amount_raised IS NULL OR e.amount_raised <= 100000000
+        WHERE (e.amount_raised IS NULL OR e.amount_raised <= 100000000)
+          AND a.is_excluded = FALSE
         ORDER BY e.date_filed DESC
     """)
 
@@ -149,7 +150,7 @@ def validate_acceptance_criteria(conn):
 
     total_acc = query(conn, "SELECT COUNT(*) FROM accelerator_companies")[0][0]
     total_edgar = query(conn, "SELECT COUNT(*) FROM edgar_filings")[0][0]
-    match_total = query(conn, "SELECT COUNT(*) FROM edgar_filings WHERE accelerator_id IS NOT NULL AND (amount_raised IS NULL OR amount_raised <= 100000000)")[0][0]
+    match_total = query(conn, "SELECT COUNT(*) FROM edgar_filings e JOIN accelerator_companies a ON e.accelerator_id = a.id WHERE (e.amount_raised IS NULL OR e.amount_raised <= 100000000) AND a.is_excluded = FALSE")[0][0]
     cik_coverage = query(conn, "SELECT COUNT(*) FROM accelerator_companies WHERE edgar_cik IS NOT NULL")[0][0]
 
     accs = query(conn, "SELECT COUNT(DISTINCT accelerator) FROM accelerator_companies")[0][0]
@@ -181,12 +182,62 @@ def validate_acceptance_criteria(conn):
         print("\nSome criteria not yet met.")
 
 
+def validate_careers(conn):
+    section("CAREERS DATA")
+
+    total_scraped = query(conn, "SELECT COUNT(*) FROM accelerator_companies WHERE careers_scraped_at IS NOT NULL AND is_excluded = FALSE")[0][0]
+    if total_scraped == 0:
+        print("  (no data — run scrapers/careers.py first)")
+        return
+
+    found = query(conn, "SELECT COUNT(*) FROM accelerator_companies WHERE careers_ats != 'not_found' AND careers_ats IS NOT NULL AND is_excluded = FALSE")[0][0]
+    not_found = query(conn, "SELECT COUNT(*) FROM accelerator_companies WHERE careers_ats = 'not_found' AND is_excluded = FALSE")[0][0]
+    print(f"Companies scraped: {total_scraped}  |  ATS found: {found}  |  Not found: {not_found}")
+
+    print("\nBy ATS:")
+    rows = query(conn, """
+        SELECT careers_ats, COUNT(*) FROM accelerator_companies
+        WHERE careers_ats IS NOT NULL AND careers_ats != 'not_found'
+        GROUP BY careers_ats ORDER BY COUNT(*) DESC
+    """)
+    for ats, cnt in rows:
+        print(f"  {ats:<12} {cnt}")
+
+    total_jobs = query(conn, "SELECT COUNT(*) FROM job_listings")[0][0]
+    print(f"\nTotal job listings: {total_jobs}")
+
+    print("\nRole category breakdown:")
+    rows = query(conn, "SELECT category, COUNT(*) FROM job_listings GROUP BY category ORDER BY COUNT(*) DESC")
+    for cat, cnt in rows:
+        print(f"  {cat:<14} {cnt}")
+
+    print("\nHiring composition per matched company (top 20 by total jobs):")
+    rows = query(conn, """
+        SELECT
+            a.name,
+            COUNT(*) AS total,
+            SUM(CASE WHEN j.category = 'engineering' THEN 1 ELSE 0 END) AS eng,
+            SUM(CASE WHEN j.category = 'product' THEN 1 ELSE 0 END) AS product,
+            SUM(CASE WHEN j.category = 'gtm' THEN 1 ELSE 0 END) AS gtm,
+            SUM(CASE WHEN j.category = 'other' THEN 1 ELSE 0 END) AS other
+        FROM job_listings j
+        JOIN accelerator_companies a ON j.company_id = a.id
+        GROUP BY a.name ORDER BY total DESC
+        LIMIT 20
+    """)
+    print(f"  {'Company':<30} {'Total':>6} {'Eng':>5} {'Prod':>5} {'GTM':>5} {'Other':>6}")
+    print(f"  {'-'*30} {'-'*6} {'-'*5} {'-'*5} {'-'*5} {'-'*6}")
+    for name, total, eng, prod, gtm, other in rows:
+        print(f"  {name[:30]:<30} {total:>6} {eng:>5} {prod:>5} {gtm:>5} {other:>6}")
+
+
 def main():
     conn = get_connection()
     try:
         validate_accelerator_companies(conn)
         validate_edgar(conn)
         validate_matches(conn)
+        validate_careers(conn)
     finally:
         conn.close()
 

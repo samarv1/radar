@@ -64,6 +64,7 @@ export function FilterBar({ filters, onChange }: Props) {
           value={filters.days}
           onChange={(v) => onChange({ ...filters, days: v })}
           options={[
+            ["all", "All"],
             ["30", "30d"],
             ["60", "60d"],
             ["90", "90d"],

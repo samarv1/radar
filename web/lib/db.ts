@@ -9,20 +9,29 @@ export type Company = {
   accelerator: string;
   batch: string | null;
   careers_ats: string | null;
+  careers_url: string | null;
   amount_raised: number | null;
   date_filed: string;
+  created_at: string;
   eng_count: number;
   product_count: number;
   gtm_count: number;
   other_count: number;
 };
 
+export async function getLastUpdated(): Promise<Date | null> {
+  const { rows } = await pool.query<{ last_updated: Date | null }>(
+    `SELECT MAX(careers_scraped_at) AS last_updated FROM accelerator_companies`
+  );
+  return rows[0]?.last_updated ?? null;
+}
+
 export async function getFeed(): Promise<Company[]> {
   const { rows } = await pool.query<Company>(`
     SELECT DISTINCT ON (a.id)
       a.id, a.name, a.website, a.accelerator, a.batch,
-      a.careers_ats,
-      e.amount_raised, e.date_filed::text,
+      a.careers_ats, a.careers_url, a.created_at::text,
+      e.amount_raised::float AS amount_raised, e.date_filed::text,
       COALESCE(h.eng, 0)::int     AS eng_count,
       COALESCE(h.product, 0)::int AS product_count,
       COALESCE(h.gtm, 0)::int     AS gtm_count,

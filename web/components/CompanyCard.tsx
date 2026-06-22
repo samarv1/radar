@@ -1,72 +1,118 @@
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
-import { HiringTags } from "@/components/HiringTags";
+import { Flame } from "lucide-react";
+import { Card, CardHeader } from "@/components/ui/card";
 import type { Company } from "@/lib/db";
 
-const ACC_LABELS: Record<string, string> = {
-  yc: "YC", a16z: "a16z", sequoia: "SEQ",
-  pear: "PEAR", lightspeed: "LS", techstars: "TS",
+const ONE_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+
+function isNew(created_at: string): boolean {
+  return Date.now() - new Date(created_at).getTime() < ONE_WEEK_MS;
+}
+
+const ROLE_COLORS: Record<string, string> = {
+  eng:     "text-blue-600",
+  gtm:     "text-green-600",
+  product: "text-purple-600",
+  other:   "text-gray-500",
 };
 
-function formatAmount(n: number | null): string {
-  if (n === null) return "undisclosed";
-  if (n === 0) return "undisclosed";
+function formatAmount(n: number | null): string | null {
+  if (n === null || n < 10_000) return null;
   if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(0)}M`;
   if (n >= 1_000) return `$${(n / 1_000).toFixed(0)}K`;
-  return `$${n}`;
+  return null;
 }
 
 function formatDate(s: string): string {
   return new Date(s).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-function formatWebsite(url: string | null): string | null {
-  if (!url) return null;
-  return url.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "");
+function OpenRoles({ company }: { company: Company }) {
+  const hasData = company.careers_ats && company.careers_ats !== "not_found";
+
+  if (!hasData) {
+    return <span className="text-muted-foreground italic">no data</span>;
+  }
+
+  const counts: [string, number][] = [
+    ["eng",     company.eng_count],
+    ["gtm",     company.gtm_count],
+    ["product", company.product_count],
+    ["other",   company.other_count],
+  ].filter(([, n]) => (n as number) > 0) as [string, number][];
+
+  if (counts.length === 0) {
+    return <span className="text-muted-foreground italic">none currently</span>;
+  }
+
+  const content = (
+    <span className="text-xs">
+      {counts.map(([cat, n], i) => (
+        <span key={cat}>
+          <span className={`font-medium ${ROLE_COLORS[cat]}`}>{n} {cat}</span>
+          {i < counts.length - 1 && <span className="text-muted-foreground"> · </span>}
+        </span>
+      ))}
+      {company.careers_url && (
+        <span className="text-muted-foreground ml-1">↗</span>
+      )}
+    </span>
+  );
+
+  return company.careers_url ? (
+    <a
+      href={company.careers_url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="relative z-10 hover:opacity-70 transition-opacity"
+    >
+      {content}
+    </a>
+  ) : content;
 }
 
 export function CompanyCard({ company }: { company: Company }) {
-  const href = company.website ?? "#";
+  const amount = formatAmount(company.amount_raised);
+  const fresh = isNew(company.created_at);
 
   return (
-    <a href={href} target="_blank" rel="noopener noreferrer" className="block group">
-      <Card className="h-full transition-shadow group-hover:shadow-md">
-        <CardHeader className="pb-2 space-y-1">
-          <div className="flex items-start justify-between gap-2">
-            <span className="text-base font-semibold leading-tight group-hover:underline">
-              {company.name}
-            </span>
-            <div className="flex gap-1 shrink-0">
-              <Badge variant="outline" className="text-xs">
-                {ACC_LABELS[company.accelerator] ?? company.accelerator.toUpperCase()}
-              </Badge>
-              {company.batch && (
-                <Badge variant="secondary" className="text-xs">
-                  {company.batch}
-                </Badge>
+    <Card className={`relative transition-shadow ${company.website ? "hover:shadow-md" : ""}`}>
+      <CardHeader className="pb-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0 space-y-0.5">
+            <p className="text-base font-semibold leading-tight flex items-center gap-1.5">
+              {company.website ? (
+                <a
+                  href={company.website}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="after:absolute after:inset-0"
+                >
+                  {company.name}
+                </a>
+              ) : company.name}
+              {fresh && (
+                <Flame className="relative z-10 shrink-0 text-orange-400" size={14} />
               )}
-            </div>
+            </p>
+            {company.batch && (
+              <p className="text-xs text-muted-foreground">{company.batch}</p>
+            )}
+            <p className="text-xs text-muted-foreground pt-1">
+              <span className="mr-1.5">Open roles:</span>
+              <OpenRoles company={company} />
+            </p>
           </div>
-          <p className="text-xs text-muted-foreground">
-            {formatWebsite(company.website) ?? "—"}
-            {" · "}
-            {formatAmount(company.amount_raised)}
-            {" · "}
-            {formatDate(company.date_filed)}
-          </p>
-        </CardHeader>
-        <Separator />
-        <CardContent className="pt-3 pb-3">
-          <HiringTags
-            careers_ats={company.careers_ats}
-            eng_count={company.eng_count}
-            product_count={company.product_count}
-            gtm_count={company.gtm_count}
-            other_count={company.other_count}
-          />
-        </CardContent>
-      </Card>
-    </a>
+
+          <div className="text-right shrink-0">
+            {amount && (
+              <p className="text-lg font-bold leading-none">{amount}</p>
+            )}
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {amount ? "raised " : ""}{formatDate(company.date_filed)}
+            </p>
+          </div>
+        </div>
+      </CardHeader>
+    </Card>
   );
 }
