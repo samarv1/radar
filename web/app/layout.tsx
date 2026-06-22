@@ -16,6 +16,15 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Radar",
   description: "Recently funded startups before they post jobs.",
+  icons: {
+    icon: "/favicon.svg",
+    apple: "/apple-icon",
+  },
+  openGraph: {
+    title: "Radar",
+    description: "Recently funded startups before they post jobs.",
+    type: "website",
+  },
 };
 
 export default function RootLayout({
