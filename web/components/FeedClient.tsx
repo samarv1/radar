@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { FilterBar, DEFAULT_FILTERS, type Filters } from "@/components/FilterBar";
 import { CompanyCard } from "@/components/CompanyCard";
 import type { Company } from "@/lib/db";
@@ -41,7 +41,8 @@ export function FeedClient({ companies }: { companies: Company[] }) {
   const [expandedOld, setExpandedOld] = useState(false);
 
   const visible = applyFilters(companies, filters);
-  const now = Date.now();
+  // eslint-disable-next-line react-hooks/purity
+  const now = useMemo(() => Date.now(), []);
 
   const recent = visible
     .filter((c) => now - new Date(c.date_filed).getTime() < SIX_MONTHS_MS)
