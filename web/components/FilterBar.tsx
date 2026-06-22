@@ -3,9 +3,17 @@
 import { Button } from "@/components/ui/button";
 
 export type Filters = {
-  source: string;
-  days: string;
-  amount: string;
+  sources: string[];
+  hiring: string[];
+  daysMax: number | null;
+  amountMax: number | null;
+};
+
+export const DEFAULT_FILTERS: Filters = {
+  sources: [],
+  hiring: [],
+  daysMax: null,
+  amountMax: null,
 };
 
 type Props = {
@@ -15,21 +23,51 @@ type Props = {
 
 function Pills({
   options,
-  value,
+  values,
   onChange,
 }: {
   options: [string, string][];
-  value: string;
-  onChange: (v: string) => void;
+  values: string[];
+  onChange: (v: string[]) => void;
 }) {
+  function toggle(val: string) {
+    onChange(
+      values.includes(val) ? values.filter((v) => v !== val) : [...values, val]
+    );
+  }
   return (
     <div className="flex gap-1 flex-wrap">
       {options.map(([val, label]) => (
         <Button
           key={val}
           size="sm"
+          variant={values.includes(val) ? "default" : "outline"}
+          onClick={() => toggle(val)}
+        >
+          {label}
+        </Button>
+      ))}
+    </div>
+  );
+}
+
+function SinglePills<T extends string | number>({
+  options,
+  value,
+  onChange,
+}: {
+  options: [T, string][];
+  value: T | null;
+  onChange: (v: T | null) => void;
+}) {
+  return (
+    <div className="flex gap-1 flex-wrap">
+      {options.map(([val, label]) => (
+        <Button
+          key={String(val)}
+          size="sm"
           variant={value === val ? "default" : "outline"}
-          onClick={() => onChange(val)}
+          onClick={() => onChange(value === val ? null : val)}
         >
           {label}
         </Button>
@@ -40,14 +78,13 @@ function Pills({
 
 export function FilterBar({ filters, onChange }: Props) {
   return (
-    <div className="flex flex-wrap gap-6 mb-6">
+    <div className="flex flex-wrap gap-8 mb-8">
       <div>
-        <p className="text-xs text-muted-foreground mb-1.5 font-medium">Source</p>
+        <p className="text-xs text-muted-foreground mb-2 font-medium">Source</p>
         <Pills
-          value={filters.source}
-          onChange={(v) => onChange({ ...filters, source: v })}
+          values={filters.sources}
+          onChange={(v) => onChange({ ...filters, sources: v })}
           options={[
-            ["all", "All"],
             ["yc", "YC"],
             ["a16z", "a16z"],
             ["sequoia", "Sequoia"],
@@ -59,30 +96,37 @@ export function FilterBar({ filters, onChange }: Props) {
       </div>
 
       <div>
-        <p className="text-xs text-muted-foreground mb-1.5 font-medium">Filed within</p>
+        <p className="text-xs text-muted-foreground mb-2 font-medium">Hiring</p>
         <Pills
-          value={filters.days}
-          onChange={(v) => onChange({ ...filters, days: v })}
+          values={filters.hiring}
+          onChange={(v) => onChange({ ...filters, hiring: v })}
           options={[
-            ["all", "All"],
-            ["30", "30d"],
-            ["60", "60d"],
-            ["90", "90d"],
+            ["yes", "Yes"],
+            ["no", "No"],
+            ["unknown", "Unknown"],
           ]}
         />
       </div>
 
       <div>
-        <p className="text-xs text-muted-foreground mb-1.5 font-medium">Amount raised</p>
-        <Pills
-          value={filters.amount}
-          onChange={(v) => onChange({ ...filters, amount: v })}
+        <p className="text-xs text-muted-foreground mb-2 font-medium">Filed within</p>
+        <SinglePills
+          options={[[30, "30d"], [60, "60d"], [90, "90d"]] as [number, string][]}
+          value={filters.daysMax}
+          onChange={(v) => onChange({ ...filters, daysMax: v })}
+        />
+      </div>
+
+      <div>
+        <p className="text-xs text-muted-foreground mb-2 font-medium">Amount raised</p>
+        <SinglePills
           options={[
-            ["any", "Any"],
-            ["0-1", "<$1M"],
-            ["1-10", "$1M–$10M"],
-            ["10-100", "$10M–$100M"],
-          ]}
+            [1_000_000, "<$1M"],
+            [10_000_000, "<$10M"],
+            [100_000_000, "<$100M"],
+          ] as [number, string][]}
+          value={filters.amountMax}
+          onChange={(v) => onChange({ ...filters, amountMax: v })}
         />
       </div>
     </div>

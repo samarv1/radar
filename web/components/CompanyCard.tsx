@@ -2,17 +2,19 @@ import { Flame } from "lucide-react";
 import { Card, CardHeader } from "@/components/ui/card";
 import type { Company } from "@/lib/db";
 
-const ONE_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
-function isNew(created_at: string): boolean {
-  return Date.now() - new Date(created_at).getTime() < ONE_WEEK_MS;
+function isRecent(date_filed: string): boolean {
+  return Date.now() - new Date(date_filed).getTime() < THIRTY_DAYS_MS;
 }
 
-const ROLE_COLORS: Record<string, string> = {
-  eng:     "text-blue-600",
-  gtm:     "text-green-600",
-  product: "text-purple-600",
-  other:   "text-gray-500",
+const SOURCE_LABELS: Record<string, string> = {
+  yc: "YC",
+  a16z: "a16z",
+  sequoia: "Sequoia",
+  pear: "Pear",
+  lightspeed: "Lightspeed",
+  techstars: "Techstars",
 };
 
 function formatAmount(n: number | null): string | null {
@@ -23,38 +25,25 @@ function formatAmount(n: number | null): string | null {
 }
 
 function formatDate(s: string): string {
-  return new Date(s).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  return new Date(s).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 }
 
-function OpenRoles({ company }: { company: Company }) {
+function HiringStatus({ company }: { company: Company }) {
   const hasData = company.careers_ats && company.careers_ats !== "not_found";
 
   if (!hasData) {
-    return <span className="text-muted-foreground italic">no data</span>;
+    return <span className="text-muted-foreground italic">unknown</span>;
   }
 
-  const counts: [string, number][] = [
-    ["eng",     company.eng_count],
-    ["gtm",     company.gtm_count],
-    ["product", company.product_count],
-    ["other",   company.other_count],
-  ].filter(([, n]) => (n as number) > 0) as [string, number][];
+  const total = company.eng_count + company.gtm_count + company.product_count + company.other_count;
 
-  if (counts.length === 0) {
-    return <span className="text-muted-foreground italic">none currently</span>;
+  if (total === 0) {
+    return <span className="text-muted-foreground italic">no</span>;
   }
 
-  const content = (
-    <span className="text-xs">
-      {counts.map(([cat, n], i) => (
-        <span key={cat}>
-          <span className={`font-medium ${ROLE_COLORS[cat]}`}>{n} {cat}</span>
-          {i < counts.length - 1 && <span className="text-muted-foreground"> · </span>}
-        </span>
-      ))}
-      {company.careers_url && (
-        <span className="text-muted-foreground ml-1">↗</span>
-      )}
+  const label = (
+    <span className="font-medium text-green-600">
+      yes{company.careers_url && <span className="text-muted-foreground font-normal ml-0.5">↗</span>}
     </span>
   );
 
@@ -65,14 +54,14 @@ function OpenRoles({ company }: { company: Company }) {
       rel="noopener noreferrer"
       className="relative z-10 hover:opacity-70 transition-opacity"
     >
-      {content}
+      {label}
     </a>
-  ) : content;
+  ) : label;
 }
 
 export function CompanyCard({ company }: { company: Company }) {
   const amount = formatAmount(company.amount_raised);
-  const fresh = isNew(company.created_at);
+  const fresh = isRecent(company.date_filed);
 
   return (
     <Card className={`relative transition-shadow ${company.website ? "hover:shadow-md" : ""}`}>
@@ -94,13 +83,20 @@ export function CompanyCard({ company }: { company: Company }) {
                 <Flame className="relative z-10 shrink-0 text-orange-400" size={14} />
               )}
             </p>
-            {company.batch && (
-              <p className="text-xs text-muted-foreground">{company.batch}</p>
-            )}
-            <p className="text-xs text-muted-foreground pt-1">
-              <span className="mr-1.5">Open roles:</span>
-              <OpenRoles company={company} />
-            </p>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {company.accelerator && SOURCE_LABELS[company.accelerator] && (
+                <span className="text-xs font-medium text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
+                  {SOURCE_LABELS[company.accelerator]}
+                </span>
+              )}
+              {company.batch && (
+                <span className="text-xs text-muted-foreground">{company.batch}</span>
+              )}
+            </div>
+            <div className="flex items-baseline gap-1.5 text-xs text-muted-foreground pt-1">
+              <span className="shrink-0">Actively hiring?</span>
+              <HiringStatus company={company} />
+            </div>
           </div>
 
           <div className="text-right shrink-0">

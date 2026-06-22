@@ -45,7 +45,10 @@ def run_daily():
 
 
 def run_weekly():
-    print("=== YC directory ===")
+    print("=== Careers (refresh stale, 7-day window) ===")
+    scrape_careers(rescrape_after_days=7)
+
+    print("\n=== YC directory ===")
     scrape_yc()
 
     print("\n=== a16z Build ===")

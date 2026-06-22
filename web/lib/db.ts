@@ -21,7 +21,10 @@ export type Company = {
 
 export async function getLastUpdated(): Promise<Date | null> {
   const { rows } = await pool.query<{ last_updated: Date | null }>(
-    `SELECT MAX(careers_scraped_at) AS last_updated FROM accelerator_companies`
+    `SELECT MAX(e.date_filed) AS last_updated
+     FROM edgar_filings e
+     JOIN accelerator_companies a ON e.accelerator_id = a.id
+     WHERE a.is_excluded = FALSE AND (e.amount_raised IS NULL OR e.amount_raised <= 100000000)`
   );
   return rows[0]?.last_updated ?? null;
 }
