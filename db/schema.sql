@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS accelerator_companies (
     edgar_cik TEXT,                  -- NULL until CIK lookup runs
     cik_confidence TEXT,             -- 'exact', 'fuzzy', or NULL
     jobs_url TEXT,                   -- careers page if known (Pear provides this)
+    is_excluded BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
