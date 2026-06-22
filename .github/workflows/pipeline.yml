@@ -1,0 +1,52 @@
+name: Data Pipeline
+
+on:
+  schedule:
+    - cron: "0 7 * * *"    # daily at 7am UTC (every day)
+    - cron: "0 8 * * 1"    # Monday 8am  — YC
+    - cron: "30 8 * * 1"   # Monday 8:30 — a16z
+    - cron: "0 9 * * 1"    # Monday 9am  — Sequoia
+    - cron: "30 9 * * 1"   # Monday 9:30 — Lightspeed
+    - cron: "0 10 * * 1"   # Monday 10am — Pear
+    - cron: "30 10 * * 1"  # Monday 10:30 — Techstars
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Pipeline mode"
+        required: false
+        default: "daily"
+        type: choice
+        options: [daily, weekly, yc, a16z, sequoia, lightspeed, pear, techstars]
+
+jobs:
+  pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v3
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Determine mode
+        id: mode
+        run: |
+          case "${{ github.event.schedule }}" in
+            "0 7 * * *")   echo "mode=daily"      >> $GITHUB_OUTPUT ;;
+            "0 8 * * 1")   echo "mode=yc"         >> $GITHUB_OUTPUT ;;
+            "30 8 * * 1")  echo "mode=a16z"       >> $GITHUB_OUTPUT ;;
+            "0 9 * * 1")   echo "mode=sequoia"    >> $GITHUB_OUTPUT ;;
+            "30 9 * * 1")  echo "mode=lightspeed" >> $GITHUB_OUTPUT ;;
+            "0 10 * * 1")  echo "mode=pear"       >> $GITHUB_OUTPUT ;;
+            "30 10 * * 1") echo "mode=techstars"  >> $GITHUB_OUTPUT ;;
+            *)             echo "mode=${{ github.event.inputs.mode || 'daily' }}" >> $GITHUB_OUTPUT ;;
+          esac
+
+      - name: Run pipeline
+        run: uv run python main.py --mode ${{ steps.mode.outputs.mode }}
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          PH_API_TOKEN: ${{ secrets.PH_API_TOKEN }}
