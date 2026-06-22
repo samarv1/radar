@@ -1,4 +1,4 @@
-import { Flame } from "lucide-react";
+import { Flame, Bookmark } from "lucide-react";
 import { Card, CardHeader } from "@/components/ui/card";
 import type { Company } from "@/lib/db";
 
@@ -59,7 +59,15 @@ function HiringStatus({ company }: { company: Company }) {
   ) : label;
 }
 
-export function CompanyCard({ company }: { company: Company }) {
+export function CompanyCard({
+  company,
+  isBookmarked,
+  onToggleBookmark,
+}: {
+  company: Company;
+  isBookmarked: boolean;
+  onToggleBookmark: () => void;
+}) {
   const amount = formatAmount(company.amount_raised);
   const fresh = isRecent(company.date_filed);
 
@@ -108,6 +116,21 @@ export function CompanyCard({ company }: { company: Company }) {
             </p>
           </div>
         </div>
+
+        <button
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onToggleBookmark();
+          }}
+          title={isBookmarked ? "Remove bookmark" : "Save company"}
+          className="absolute bottom-3 right-3 z-10 p-1 rounded text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <Bookmark
+            size={14}
+            fill={isBookmarked ? "currentColor" : "none"}
+          />
+        </button>
       </CardHeader>
     </Card>
   );
