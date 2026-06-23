@@ -1,80 +1,49 @@
 "use client";
 
+import { useState, useRef, useEffect } from "react";
+import { ChevronDown, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export type Filters = {
   accelerators: string[];
   hiring: string[];
-  daysMax: number | null;
-  amountMax: number | null;
+  days: number[];
+  amounts: number[];
+  verticals: string[];
 };
 
 export const DEFAULT_FILTERS: Filters = {
   accelerators: [],
   hiring: [],
-  daysMax: null,
-  amountMax: null,
+  days: [],
+  amounts: [],
+  verticals: [],
 };
 
-type Props = {
-  filters: Filters;
-  onChange: (f: Filters) => void;
+export const VERTICAL_KEYWORDS: Record<string, string[]> = {
+  ai:       ["ai", "artificial intelligence", "machine learning", "generative ai", "llm", "deep learning", "nlp", "computer vision"],
+  fintech:  ["fintech", "payments", "crypto", "blockchain", "banking", "insurtech", "lending", "wealth"],
+  health:   ["health", "biotech", "pharma", "medical", "clinical", "genomics", "drug", "therapy", "mental health"],
+  b2b:      ["saas", "b2b", "enterprise"],
+  devtools: ["developer tools", "developer tool", "infrastructure", "open source", "devops", "security", "observability", "api", "platform engineering"],
+  climate:  ["climate", "cleantech", "sustainability", "energy", "carbon", "renewable"],
+  consumer: ["consumer", "e-commerce", "marketplace", "gaming", "social", "entertainment", "media", "retail"],
+  edtech:   ["education", "edtech", "learning", "upskilling"],
+  hardware: ["hardware", "robotics", "iot", "internet of things", "manufacturing", "semiconductors", "aerospace"],
 };
 
-function Pills({
-  options,
-  values,
-  onChange,
-}: {
-  options: [string, string][];
-  values: string[];
-  onChange: (v: string[]) => void;
-}) {
-  function toggle(val: string) {
-    onChange(
-      values.includes(val) ? values.filter((v) => v !== val) : [...values, val]
-    );
-  }
-  return (
-    <div className="flex gap-1 flex-wrap">
-      {options.map(([val, label]) => (
-        <Button
-          key={val}
-          size="sm"
-          variant={values.includes(val) ? "default" : "outline"}
-          onClick={() => toggle(val)}
-        >
-          {label}
-        </Button>
-      ))}
-    </div>
-  );
-}
-
-function SinglePills<T extends string | number>({
-  options,
-  value,
-  onChange,
-}: {
-  options: [T, string][];
-  value: T | null;
-  onChange: (v: T | null) => void;
-}) {
-  return (
-    <div className="flex gap-1 flex-wrap">
-      {options.map(([val, label]) => (
-        <Button
-          key={String(val)}
-          size="sm"
-          variant={value === val ? "default" : "outline"}
-          onClick={() => onChange(value === val ? null : val)}
-        >
-          {label}
-        </Button>
-      ))}
-    </div>
-  );
-}
+const VERTICAL_OPTIONS: [string, string][] = [
+  ["ai", "AI / ML"],
+  ["fintech", "Fintech"],
+  ["health", "Health"],
+  ["b2b", "B2B / SaaS"],
+  ["devtools", "Dev Tools"],
+  ["climate", "Climate"],
+  ["consumer", "Consumer"],
+  ["edtech", "EdTech"],
+  ["hardware", "Hardware"],
+  ["unknown", "Unknown"],
+];
 
 const ACCELERATOR_OPTIONS: [string, string][] = [
   ["yc", "YC"],
@@ -108,54 +77,151 @@ const ROLE_LEVEL_OPTIONS: [string, string][] = [
   ["experienced", "Other"],
 ];
 
-export function HiringFilterBar({
-  accelerators,
-  roleTypes,
-  roleLevels,
-  onAccelerators,
-  onRoleTypes,
-  onRoleLevels,
+function CheckboxList({
+  options,
+  values,
+  onChange,
 }: {
-  accelerators: string[];
-  roleTypes: string[];
-  roleLevels: string[];
-  onAccelerators: (v: string[]) => void;
-  onRoleTypes: (v: string[]) => void;
-  onRoleLevels: (v: string[]) => void;
+  options: [string, string][];
+  values: string[];
+  onChange: (v: string[]) => void;
 }) {
+  function toggle(val: string) {
+    onChange(
+      values.includes(val) ? values.filter((v) => v !== val) : [...values, val]
+    );
+  }
   return (
-    <div className="flex flex-wrap gap-8 mb-8">
-      <div>
-        <p className="text-xs text-muted-foreground mb-2 font-medium">Accelerator / Firm</p>
-        <Pills values={accelerators} onChange={onAccelerators} options={HIRING_ACCELERATOR_OPTIONS} />
-      </div>
-      <div>
-        <p className="text-xs text-muted-foreground mb-2 font-medium">Role Type</p>
-        <Pills values={roleTypes} onChange={onRoleTypes} options={ROLE_TYPE_OPTIONS} />
-      </div>
-      <div>
-        <p className="text-xs text-muted-foreground mb-2 font-medium">Role Level</p>
-        <Pills values={roleLevels} onChange={onRoleLevels} options={ROLE_LEVEL_OPTIONS} />
-      </div>
+    <div className="flex flex-col min-w-[150px]">
+      {options.map(([val, label]) => {
+        const checked = values.includes(val);
+        return (
+          <button
+            key={val}
+            onClick={() => toggle(val)}
+            className="flex items-center gap-2.5 px-2 py-1.5 rounded-md hover:bg-muted text-sm text-left w-full transition-colors"
+          >
+            <div className={`w-4 h-4 rounded border shrink-0 flex items-center justify-center transition-colors ${checked ? "bg-foreground border-foreground" : "border-border"}`}>
+              {checked && <Check size={10} className="text-background" strokeWidth={3} />}
+            </div>
+            {label}
+          </button>
+        );
+      })}
     </div>
   );
 }
 
+function NumberCheckboxList({
+  options,
+  values,
+  onChange,
+}: {
+  options: [number, string][];
+  values: number[];
+  onChange: (v: number[]) => void;
+}) {
+  function toggle(val: number) {
+    onChange(
+      values.includes(val) ? values.filter((v) => v !== val) : [...values, val]
+    );
+  }
+  return (
+    <div className="flex flex-col min-w-[120px]">
+      {options.map(([val, label]) => {
+        const checked = values.includes(val);
+        return (
+          <button
+            key={val}
+            onClick={() => toggle(val)}
+            className="flex items-center gap-2.5 px-2 py-1.5 rounded-md hover:bg-muted text-sm text-left w-full transition-colors"
+          >
+            <div className={`w-4 h-4 rounded border shrink-0 flex items-center justify-center transition-colors ${checked ? "bg-foreground border-foreground" : "border-border"}`}>
+              {checked && <Check size={10} className="text-background" strokeWidth={3} />}
+            </div>
+            {label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function FilterDropdown({
+  label,
+  activeCount,
+  children,
+}: {
+  label: string;
+  activeCount: number;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [open]);
+
+  const active = activeCount > 0;
+
+  return (
+    <div ref={ref} className="relative">
+      <Button
+        size="sm"
+        variant={active ? "default" : "outline"}
+        onClick={() => setOpen((o) => !o)}
+        className="gap-1.5"
+      >
+        {label}
+        {active && (
+          <span className="bg-white/25 text-[10px] font-semibold leading-none rounded-full px-1.5 py-0.5">
+            {activeCount}
+          </span>
+        )}
+        <ChevronDown size={13} className={`transition-transform ${open ? "rotate-180" : ""}`} />
+      </Button>
+
+      {open && (
+        <div className="absolute top-full mt-1.5 left-0 z-50 bg-background border border-border rounded-lg shadow-lg p-3 min-w-max">
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+type Props = {
+  filters: Filters;
+  onChange: (f: Filters) => void;
+};
+
 export function FilterBar({ filters, onChange }: Props) {
   return (
-    <div className="flex flex-wrap gap-8 mb-8">
-      <div>
-        <p className="text-xs text-muted-foreground mb-2 font-medium">Accelerator / Firm</p>
-        <Pills
+    <div className="flex flex-wrap gap-2 mb-8">
+      <FilterDropdown label="Accelerator" activeCount={filters.accelerators.length}>
+        <CheckboxList
           values={filters.accelerators}
           onChange={(v) => onChange({ ...filters, accelerators: v })}
           options={ACCELERATOR_OPTIONS}
         />
-      </div>
+      </FilterDropdown>
 
-      <div>
-        <p className="text-xs text-muted-foreground mb-2 font-medium">Hiring</p>
-        <Pills
+      <FilterDropdown label="Vertical" activeCount={filters.verticals.length}>
+        <CheckboxList
+          values={filters.verticals}
+          onChange={(v) => onChange({ ...filters, verticals: v })}
+          options={VERTICAL_OPTIONS}
+        />
+      </FilterDropdown>
+
+      <FilterDropdown label="Hiring" activeCount={filters.hiring.length}>
+        <CheckboxList
           values={filters.hiring}
           onChange={(v) => onChange({ ...filters, hiring: v })}
           options={[
@@ -164,29 +230,67 @@ export function FilterBar({ filters, onChange }: Props) {
             ["unknown", "Unknown"],
           ]}
         />
-      </div>
+      </FilterDropdown>
 
-      <div>
-        <p className="text-xs text-muted-foreground mb-2 font-medium">Filed within</p>
-        <SinglePills
-          options={[[30, "30d"], [60, "60d"], [90, "90d"]] as [number, string][]}
-          value={filters.daysMax}
-          onChange={(v) => onChange({ ...filters, daysMax: v })}
+      <FilterDropdown label="Filed within" activeCount={filters.days.length}>
+        <NumberCheckboxList
+          options={[[30, "30d"], [60, "60d"], [90, "90d"]]}
+          values={filters.days}
+          onChange={(v) => onChange({ ...filters, days: v })}
         />
-      </div>
+      </FilterDropdown>
 
-      <div>
-        <p className="text-xs text-muted-foreground mb-2 font-medium">Amount raised</p>
-        <SinglePills
+      <FilterDropdown label="Amount raised" activeCount={filters.amounts.length}>
+        <NumberCheckboxList
           options={[
             [1_000_000, "<$1M"],
             [10_000_000, "<$10M"],
             [100_000_000, "<$100M"],
-          ] as [number, string][]}
-          value={filters.amountMax}
-          onChange={(v) => onChange({ ...filters, amountMax: v })}
+          ]}
+          values={filters.amounts}
+          onChange={(v) => onChange({ ...filters, amounts: v })}
         />
-      </div>
+      </FilterDropdown>
+    </div>
+  );
+}
+
+export function HiringFilterBar({
+  accelerators,
+  roleTypes,
+  roleLevels,
+  verticals,
+  onAccelerators,
+  onRoleTypes,
+  onRoleLevels,
+  onVerticals,
+}: {
+  accelerators: string[];
+  roleTypes: string[];
+  roleLevels: string[];
+  verticals: string[];
+  onAccelerators: (v: string[]) => void;
+  onRoleTypes: (v: string[]) => void;
+  onRoleLevels: (v: string[]) => void;
+  onVerticals: (v: string[]) => void;
+}) {
+  return (
+    <div className="flex flex-wrap gap-2 mb-8">
+      <FilterDropdown label="Accelerator" activeCount={accelerators.length}>
+        <CheckboxList values={accelerators} onChange={onAccelerators} options={HIRING_ACCELERATOR_OPTIONS} />
+      </FilterDropdown>
+
+      <FilterDropdown label="Vertical" activeCount={verticals.length}>
+        <CheckboxList values={verticals} onChange={onVerticals} options={VERTICAL_OPTIONS} />
+      </FilterDropdown>
+
+      <FilterDropdown label="Role Type" activeCount={roleTypes.length}>
+        <CheckboxList values={roleTypes} onChange={onRoleTypes} options={ROLE_TYPE_OPTIONS} />
+      </FilterDropdown>
+
+      <FilterDropdown label="Role Level" activeCount={roleLevels.length}>
+        <CheckboxList values={roleLevels} onChange={onRoleLevels} options={ROLE_LEVEL_OPTIONS} />
+      </FilterDropdown>
     </div>
   );
 }

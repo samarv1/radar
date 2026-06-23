@@ -21,6 +21,7 @@ export type Company = {
   other_count: number;
   intern_count: number;
   new_grad_count: number;
+  tags: string[] | null;
 };
 
 
@@ -29,6 +30,7 @@ export async function getHiringFeed(): Promise<Company[]> {
     SELECT
       a.id, a.name, a.website, a.accelerator, a.batch,
       a.careers_ats, a.careers_url, a.created_at::text,
+      a.tags,
       NULL::float AS amount_raised,
       COALESCE(h.latest_posted_at::date::text, h.latest_first_seen_at::date::text, a.careers_scraped_at::date::text) AS date_filed,
       CASE WHEN h.latest_posted_at IS NOT NULL OR h.latest_first_seen_at IS NOT NULL THEN 'posted' ELSE 'scraped' END AS date_source,
@@ -97,7 +99,8 @@ export async function getFeed(): Promise<Company[]> {
         COALESCE(h.gtm, 0)::int     AS gtm_count,
         COALESCE(h.other, 0)::int   AS other_count,
         0::int AS intern_count,
-        0::int AS new_grad_count
+        0::int AS new_grad_count,
+        a.tags
       FROM accelerator_companies a
       JOIN edgar_filings e ON e.accelerator_id = a.id
       LEFT JOIN (
@@ -135,7 +138,8 @@ export async function getFeed(): Promise<Company[]> {
         0::int AS gtm_count,
         0::int AS other_count,
         0::int AS intern_count,
-        0::int AS new_grad_count
+        0::int AS new_grad_count,
+        NULL::text[] AS tags
       FROM edgar_filings ef
       WHERE ef.accelerator_id IS NULL
         AND ef.standalone_source IS NOT NULL
@@ -168,7 +172,8 @@ export async function getFeed(): Promise<Company[]> {
         0::int AS gtm_count,
         0::int AS other_count,
         0::int AS intern_count,
-        0::int AS new_grad_count
+        0::int AS new_grad_count,
+        NULL::text[] AS tags
       FROM funding_news fn
       WHERE fn.accelerator_id IS NULL
         AND fn.amount_usd IS NOT NULL
@@ -204,7 +209,8 @@ export async function getFeed(): Promise<Company[]> {
         COALESCE(h.gtm, 0)::int     AS gtm_count,
         COALESCE(h.other, 0)::int   AS other_count,
         0::int AS intern_count,
-        0::int AS new_grad_count
+        0::int AS new_grad_count,
+        a.tags
       FROM accelerator_companies a
       JOIN funding_news fn ON fn.accelerator_id = a.id
       LEFT JOIN (
