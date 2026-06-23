@@ -272,9 +272,14 @@ def get_pending_companies(
         else ""
     )
     if hiring_sweep:
-        # Sweep all accelerator companies regardless of EDGAR status.
-        # Exclude companies with any known large raise (>$100M) to avoid
-        # Databricks/Waymo-scale companies flooding the Hiring section.
+        # Sweep accelerator companies regardless of EDGAR status, but filter
+        # to early-stage companies to avoid Amplitude/Reddit-scale companies.
+        #
+        # Per-accelerator strategy:
+        #   YC/Techstars  — batch year >= 2019 (cuts pre-2019 cohorts with many large exits)
+        #   a16z          — exclude stage containing 'Growth' or 'EXIT'
+        #   Sequoia       — only Pre-Seed/Seed or Early stage (others are established)
+        #   Pear/Lightspeed — include all (small focused firms, no legacy large portfolio)
         sql = f"""
             SELECT DISTINCT a.id, a.name, a.website
             FROM accelerator_companies a
@@ -284,6 +289,17 @@ def get_pending_companies(
                 SELECT 1 FROM edgar_filings ef
                 WHERE ef.accelerator_id = a.id
                   AND ef.amount_raised > 100000000
+              )
+              AND (
+                (a.accelerator IN ('yc', 'techstars')
+                 AND a.batch IS NOT NULL
+                 AND COALESCE(SUBSTRING(a.batch FROM '\\d{{4}}'), '0')::int >= 2019)
+                OR (a.accelerator = 'a16z'
+                    AND (a.stage IS NULL
+                         OR (a.stage NOT ILIKE '%growth%' AND a.stage NOT ILIKE '%exit%')))
+                OR (a.accelerator = 'sequoia'
+                    AND (a.stage IS NULL OR a.stage IN ('Pre-Seed/Seed', 'Early')))
+                OR a.accelerator IN ('pear', 'lightspeed')
               )
             ORDER BY a.id
         """
