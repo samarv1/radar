@@ -28,6 +28,9 @@ CREATE TABLE IF NOT EXISTS edgar_filings (
     accession_number TEXT UNIQUE NOT NULL,
     raw_url TEXT,
     accelerator_id INT REFERENCES accelerator_companies(id),
+    standalone_source TEXT,              -- 'techcrunch' or 'producthunt' for non-accelerator validated startups
+    investor_count INT,                  -- totalNumberAlreadyInvested from Form D XML
+    vc_firm_signal TEXT,                 -- VC firm name if found in director/promoter relationship clarifications
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 

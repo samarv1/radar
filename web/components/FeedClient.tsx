@@ -5,12 +5,13 @@ import { Radar, Bookmark } from "lucide-react";
 import { FilterBar, DEFAULT_FILTERS, type Filters } from "@/components/FilterBar";
 import { CompanyCard } from "@/components/CompanyCard";
 import { useBookmarks } from "@/lib/useBookmarks";
-import type { Company } from "@/lib/db";
+import type { Company, LastUpdated } from "@/lib/db";
 
 const SIX_MONTHS_MS = 180 * 24 * 60 * 60 * 1000;
 
-function lastUpdatedLabel(date: Date): string {
-  return date.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+function lastUpdatedLabel(lu: LastUpdated): string {
+  const dateStr = lu.date.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+  return `latest ${lu.type} ${dateStr}`;
 }
 
 function hiringStatus(c: Company): "yes" | "no" | "unknown" {
@@ -20,9 +21,18 @@ function hiringStatus(c: Company): "yes" | "no" | "unknown" {
   return total > 0 ? "yes" : "no";
 }
 
+const KNOWN_ACCELERATORS = ["yc", "a16z", "sequoia", "pear", "lightspeed", "techstars"];
+
 function applyFilters(companies: Company[], f: Filters): Company[] {
   return companies.filter((c) => {
-    if (f.sources.length > 0 && !f.sources.includes(c.accelerator)) return false;
+    // Accelerator filter: known accelerator slugs, or "unknown" for non-accelerator companies
+    if (f.accelerators.length > 0) {
+      const isKnown = KNOWN_ACCELERATORS.includes(c.accelerator);
+      const matchesAccel = f.accelerators.includes(c.accelerator);
+      const matchesUnknown = f.accelerators.includes("unknown") && !isKnown;
+      if (!matchesAccel && !matchesUnknown) return false;
+    }
+
     if (f.hiring.length > 0 && !f.hiring.includes(hiringStatus(c))) return false;
 
     if (f.daysMax !== null) {
@@ -47,7 +57,7 @@ export function FeedClient({
   lastUpdated,
 }: {
   companies: Company[];
-  lastUpdated: Date | null;
+  lastUpdated: LastUpdated | null;
 }) {
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
   const [expandedOld, setExpandedOld] = useState(false);
@@ -82,7 +92,7 @@ export function FeedClient({
             Radar
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            hot & recently funded startups · updates daily · latest filing{" "}
+            hot & recently funded startups · updates daily ·{" "}
             {lastUpdated ? lastUpdatedLabel(lastUpdated) : "—"}
           </p>
         </div>
