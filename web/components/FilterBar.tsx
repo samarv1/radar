@@ -10,6 +10,7 @@ export type Filters = {
   days: number[];
   amounts: number[];
   verticals: string[];
+  rounds: string[];
 };
 
 export const DEFAULT_FILTERS: Filters = {
@@ -18,7 +19,24 @@ export const DEFAULT_FILTERS: Filters = {
   days: [],
   amounts: [],
   verticals: [],
+  rounds: [],
 };
+
+export function getRoundFromAmount(n: number | null): string {
+  if (n === null) return "unknown";
+  if (n < 3_000_000) return "seed";
+  if (n < 15_000_000) return "series_a";
+  if (n < 40_000_000) return "series_b";
+  return "series_c";
+}
+
+const ROUND_OPTIONS: [string, string][] = [
+  ["seed", "Seed"],
+  ["series_a", "Series A"],
+  ["series_b", "Series B"],
+  ["series_c", "Series C+"],
+  ["unknown", "Unknown"],
+];
 
 export const VERTICAL_KEYWORDS: Record<string, string[]> = {
   ai:       ["ai", "artificial intelligence", "machine learning", "generative ai", "llm", "deep learning", "nlp", "computer vision"],
@@ -249,6 +267,14 @@ export function FilterBar({ filters, onChange }: Props) {
           ]}
           values={filters.amounts}
           onChange={(v) => onChange({ ...filters, amounts: v })}
+        />
+      </FilterDropdown>
+
+      <FilterDropdown label="Round" activeCount={filters.rounds.length}>
+        <CheckboxList
+          values={filters.rounds}
+          onChange={(v) => onChange({ ...filters, rounds: v })}
+          options={ROUND_OPTIONS}
         />
       </FilterDropdown>
     </div>
