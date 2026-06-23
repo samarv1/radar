@@ -13,7 +13,14 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+const siteUrl = process.env.NEXT_PUBLIC_SITE_URL
+  ? process.env.NEXT_PUBLIC_SITE_URL
+  : process.env.VERCEL_URL
+  ? `https://${process.env.VERCEL_URL}`
+  : "http://localhost:3000";
+
 export const metadata: Metadata = {
+  metadataBase: new URL(siteUrl),
   title: "Radar",
   description: "Recently funded startups before they post jobs.",
   icons: {
@@ -24,6 +31,7 @@ export const metadata: Metadata = {
     title: "Radar",
     description: "Recently funded startups before they post jobs.",
     type: "website",
+    url: siteUrl,
   },
 };
 
