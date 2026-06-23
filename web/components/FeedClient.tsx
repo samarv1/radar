@@ -7,7 +7,7 @@ import { CompanyCard } from "@/components/CompanyCard";
 import { useBookmarks } from "@/lib/useBookmarks";
 import type { Company } from "@/lib/db";
 
-const PAGE_SIZE = 24;
+const PAGE_SIZE = 15;
 
 const SIX_MONTHS_MS = 180 * 24 * 60 * 60 * 1000;
 
