@@ -12,70 +12,50 @@ export type Company = {
   careers_url: string | null;
   amount_raised: number | null;
   date_filed: string;
+  date_source?: string;
   created_at: string;
   has_edgar: boolean;
   eng_count: number;
   product_count: number;
   gtm_count: number;
   other_count: number;
+  intern_count: number;
+  new_grad_count: number;
 };
 
-export type LastUpdated = { date: Date; type: "filing" | "announcement" };
-
-export async function getLastUpdated(): Promise<LastUpdated | null> {
-  const { rows } = await pool.query<{ signal_date: Date; signal_type: string }>(
-    `SELECT signal_date, signal_type FROM (
-       SELECT MAX(e.date_filed) AS signal_date, 'filing' AS signal_type
-       FROM edgar_filings e
-       LEFT JOIN accelerator_companies a ON e.accelerator_id = a.id
-       WHERE (
-         (e.accelerator_id IS NOT NULL AND a.is_excluded = FALSE)
-         OR (e.accelerator_id IS NULL AND e.standalone_source IS NOT NULL)
-       )
-       AND (e.amount_raised IS NULL OR e.amount_raised <= 100000000)
-
-       UNION ALL
-
-       SELECT MAX(fn.published_at::date) AS signal_date, 'announcement' AS signal_type
-       FROM funding_news fn
-       WHERE fn.accelerator_id IS NULL
-         AND fn.amount_usd IS NOT NULL AND fn.amount_usd <= 100000000
-         AND array_length(regexp_split_to_array(trim(fn.company_name), '\\s+'), 1) <= 3
-         AND fn.company_name NOT LIKE '%:%'
-         AND fn.company_name NOT LIKE '%,%'
-         AND fn.company_name !~* '\\y(capital|fund|venture|ventures|partner|partners|vc)\\y'
-     ) combined
-     ORDER BY signal_date DESC NULLS LAST
-     LIMIT 1`
-  );
-  const row = rows[0];
-  if (!row?.signal_date) return null;
-  return { date: row.signal_date, type: row.signal_type as "filing" | "announcement" };
-}
 
 export async function getHiringFeed(): Promise<Company[]> {
   const { rows } = await pool.query<Company>(`
-    SELECT DISTINCT ON (a.id)
+    SELECT
       a.id, a.name, a.website, a.accelerator, a.batch,
       a.careers_ats, a.careers_url, a.created_at::text,
       NULL::float AS amount_raised,
-      a.careers_scraped_at::date::text AS date_filed,
+      COALESCE(h.latest_posted_at::date::text, h.latest_first_seen_at::date::text, a.careers_scraped_at::date::text) AS date_filed,
+      CASE WHEN h.latest_posted_at IS NOT NULL OR h.latest_first_seen_at IS NOT NULL THEN 'posted' ELSE 'scraped' END AS date_source,
       FALSE AS has_edgar,
-      COALESCE(h.eng, 0)::int     AS eng_count,
-      COALESCE(h.product, 0)::int AS product_count,
-      COALESCE(h.gtm, 0)::int     AS gtm_count,
-      COALESCE(h.other, 0)::int   AS other_count
+      COALESCE(h.eng, 0)::int      AS eng_count,
+      COALESCE(h.product, 0)::int  AS product_count,
+      COALESCE(h.gtm, 0)::int      AS gtm_count,
+      COALESCE(h.other, 0)::int    AS other_count,
+      COALESCE(h.intern, 0)::int   AS intern_count,
+      COALESCE(h.new_grad, 0)::int AS new_grad_count
     FROM accelerator_companies a
     JOIN (
       SELECT company_id,
         SUM(CASE WHEN category = 'engineering' THEN 1 ELSE 0 END) AS eng,
         SUM(CASE WHEN category = 'product'     THEN 1 ELSE 0 END) AS product,
         SUM(CASE WHEN category = 'gtm'         THEN 1 ELSE 0 END) AS gtm,
-        SUM(CASE WHEN category = 'other'       THEN 1 ELSE 0 END) AS other
+        SUM(CASE WHEN category = 'other'       THEN 1 ELSE 0 END) AS other,
+        SUM(CASE WHEN category = 'intern'      THEN 1 ELSE 0 END) AS intern,
+        SUM(CASE WHEN category = 'new_grad'    THEN 1 ELSE 0 END) AS new_grad,
+        MAX(posted_at)      AS latest_posted_at,
+        MAX(first_seen_at)  AS latest_first_seen_at,
+        MAX(scraped_at)     AS latest_scraped_at
       FROM job_listings GROUP BY company_id
     ) h ON h.company_id = a.id
     WHERE a.is_excluded = FALSE
-      AND (h.eng + h.product + h.gtm + h.other) > 0
+      AND (h.eng + h.product + h.gtm + h.other + h.intern + h.new_grad) > 0
+      AND COALESCE(h.latest_posted_at, h.latest_first_seen_at, h.latest_scraped_at) >= NOW() - INTERVAL '90 days'
       -- Not already in the Raised feed (no EDGAR filing in last 90 days)
       AND NOT EXISTS (
         SELECT 1 FROM edgar_filings ef
@@ -88,11 +68,8 @@ export async function getHiringFeed(): Promise<Company[]> {
         WHERE ef.accelerator_id = a.id
           AND ef.amount_raised > 100000000
       )
-      -- Early-stage filter: same logic as hiring sweep in careers.py
       AND (
-        (a.accelerator IN ('yc', 'techstars')
-         AND a.batch IS NOT NULL
-         AND COALESCE(SUBSTRING(a.batch FROM '\d{4}'), '0')::int >= 2019)
+        a.accelerator IN ('yc', 'techstars')
         OR (a.accelerator = 'a16z'
             AND (a.stage IS NULL
                  OR (a.stage NOT ILIKE '%growth%' AND a.stage NOT ILIKE '%exit%')))
@@ -100,7 +77,7 @@ export async function getHiringFeed(): Promise<Company[]> {
             AND (a.stage IS NULL OR a.stage IN ('Pre-Seed/Seed', 'Early')))
         OR a.accelerator IN ('pear', 'lightspeed')
       )
-    ORDER BY a.id
+    ORDER BY h.latest_posted_at DESC NULLS LAST, h.latest_first_seen_at DESC NULLS LAST, h.latest_scraped_at DESC
   `);
   return rows;
 }
@@ -117,7 +94,9 @@ export async function getFeed(): Promise<Company[]> {
         COALESCE(h.eng, 0)::int     AS eng_count,
         COALESCE(h.product, 0)::int AS product_count,
         COALESCE(h.gtm, 0)::int     AS gtm_count,
-        COALESCE(h.other, 0)::int   AS other_count
+        COALESCE(h.other, 0)::int   AS other_count,
+        0::int AS intern_count,
+        0::int AS new_grad_count
       FROM accelerator_companies a
       JOIN edgar_filings e ON e.accelerator_id = a.id
       LEFT JOIN (
@@ -152,7 +131,9 @@ export async function getFeed(): Promise<Company[]> {
         0::int AS eng_count,
         0::int AS product_count,
         0::int AS gtm_count,
-        0::int AS other_count
+        0::int AS other_count,
+        0::int AS intern_count,
+        0::int AS new_grad_count
       FROM edgar_filings ef
       WHERE ef.accelerator_id IS NULL
         AND ef.standalone_source IS NOT NULL
@@ -182,7 +163,9 @@ export async function getFeed(): Promise<Company[]> {
         0::int AS eng_count,
         0::int AS product_count,
         0::int AS gtm_count,
-        0::int AS other_count
+        0::int AS other_count,
+        0::int AS intern_count,
+        0::int AS new_grad_count
       FROM funding_news fn
       WHERE fn.accelerator_id IS NULL
         AND fn.amount_usd IS NOT NULL
@@ -215,7 +198,9 @@ export async function getFeed(): Promise<Company[]> {
         COALESCE(h.eng, 0)::int     AS eng_count,
         COALESCE(h.product, 0)::int AS product_count,
         COALESCE(h.gtm, 0)::int     AS gtm_count,
-        COALESCE(h.other, 0)::int   AS other_count
+        COALESCE(h.other, 0)::int   AS other_count,
+        0::int AS intern_count,
+        0::int AS new_grad_count
       FROM accelerator_companies a
       JOIN funding_news fn ON fn.accelerator_id = a.id
       LEFT JOIN (
