@@ -2,22 +2,11 @@
 
 import { Flame, Bookmark } from "lucide-react";
 import { Card, CardHeader } from "@/components/ui/card";
-import { getRoundFromAmount } from "@/components/FilterBar";
+import { getRoundFromAmount, VERTICAL_KEYWORDS, tagMatchesKeyword } from "@/components/FilterBar";
 import type { Company } from "@/lib/db";
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
-const VERTICAL_KEYWORDS: Record<string, string[]> = {
-  ai:       ["ai", "artificial intelligence", "machine learning", "generative ai", "llm", "deep learning", "nlp", "computer vision"],
-  fintech:  ["fintech", "payments", "crypto", "blockchain", "banking", "insurtech", "lending", "wealth"],
-  health:   ["health", "biotech", "pharma", "medical", "clinical", "genomics", "drug", "therapy", "mental health"],
-  b2b:      ["saas", "b2b", "enterprise"],
-  devtools: ["developer tools", "developer tool", "infrastructure", "open source", "devops", "security", "observability", "api", "platform engineering"],
-  climate:  ["climate", "cleantech", "sustainability", "energy", "carbon", "renewable"],
-  consumer: ["consumer", "e-commerce", "marketplace", "gaming", "social", "entertainment", "media", "retail"],
-  edtech:   ["education", "edtech", "learning", "upskilling"],
-  hardware: ["hardware", "robotics", "iot", "internet of things", "manufacturing", "semiconductors", "aerospace"],
-};
 
 const VERTICAL_LABELS: Record<string, string> = {
   ai: "AI / ML",
@@ -35,7 +24,7 @@ function getVerticals(tags: string[] | null): string[] {
   if (!tags || tags.length === 0) return [];
   return Object.entries(VERTICAL_KEYWORDS)
     .filter(([, keywords]) =>
-      keywords.some((kw) => tags.some((t) => t.toLowerCase().includes(kw)))
+      keywords.some((kw) => tags.some((t) => tagMatchesKeyword(t, kw)))
     )
     .map(([key]) => key)
     .slice(0, 3);

@@ -46,9 +46,17 @@ export const VERTICAL_KEYWORDS: Record<string, string[]> = {
   devtools: ["developer tools", "developer tool", "infrastructure", "open source", "devops", "security", "observability", "api", "platform engineering"],
   climate:  ["climate", "cleantech", "sustainability", "energy", "carbon", "renewable"],
   consumer: ["consumer", "e-commerce", "marketplace", "gaming", "social", "entertainment", "media", "retail"],
-  edtech:   ["education", "edtech", "learning", "upskilling"],
+  edtech:   ["education", "edtech", "upskilling"],
   hardware: ["hardware", "robotics", "iot", "internet of things", "manufacturing", "semiconductors", "aerospace"],
 };
+
+export function tagMatchesKeyword(tag: string, kw: string): boolean {
+  const t = tag.toLowerCase();
+  const escaped = kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // Left-boundary match: kw must start at beginning of tag or after a non-word char.
+  // This catches "Healthcare" → "health" (prefix) while blocking "Biomedical" → "media" (infix).
+  return new RegExp(`(?:^|\\W)${escaped}`).test(t);
+}
 
 const VERTICAL_OPTIONS: [string, string][] = [
   ["ai", "AI / ML"],

@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useEffect, useRef } from "react";
 import { Radar, Bookmark, ChevronLeft, ChevronRight } from "lucide-react";
-import { FilterBar, HiringFilterBar, DEFAULT_FILTERS, VERTICAL_KEYWORDS, getRoundFromAmount, type Filters } from "@/components/FilterBar";
+import { FilterBar, HiringFilterBar, DEFAULT_FILTERS, VERTICAL_KEYWORDS, tagMatchesKeyword, getRoundFromAmount, type Filters } from "@/components/FilterBar";
 import { CompanyCard } from "@/components/CompanyCard";
 import { useBookmarks } from "@/lib/useBookmarks";
 import type { Company } from "@/lib/db";
@@ -28,7 +28,7 @@ function matchesVertical(tags: string[] | null, verticals: string[]): boolean {
     (v) =>
       v !== "unknown" &&
       VERTICAL_KEYWORDS[v].some((kw) =>
-        tags.some((t) => t.toLowerCase().includes(kw))
+        tags.some((t) => tagMatchesKeyword(t, kw))
       )
   );
 }
