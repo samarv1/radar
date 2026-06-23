@@ -11,6 +11,7 @@ weekly           : all of the above + YC + all accelerator directories + PH full
 import argparse
 
 from scrapers.a16z import scrape as scrape_a16z
+from scrapers.a16z_build import scrape as scrape_a16z_build
 from scrapers.careers import scrape as scrape_careers
 from scrapers.cik_lookup import run as run_cik_lookup
 from scrapers.cross_reference import run as run_cross_reference
@@ -76,6 +77,9 @@ def run_weekly():
 
     print("\n=== Product Hunt full backfill (90 days) ===")
     scrape_ph(days_back=90)
+
+    print("\n=== a16z Build newsletter ===")
+    scrape_a16z_build(days_back=30)
 
 
 SCRAPERS = {
