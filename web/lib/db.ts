@@ -215,6 +215,7 @@ export async function getFeed(): Promise<Company[]> {
         FROM job_listings GROUP BY company_id
       ) h ON h.company_id = a.id
       WHERE a.is_excluded = FALSE
+        AND fn.source != 'a16z_build'
         AND (fn.amount_usd IS NULL OR fn.amount_usd <= 100000000)
         AND NOT EXISTS (
           SELECT 1 FROM edgar_filings ef WHERE ef.accelerator_id = a.id
