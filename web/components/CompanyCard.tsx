@@ -112,11 +112,15 @@ export function CompanyCard({
               <p className="text-lg font-bold leading-none">{amount}</p>
             )}
             <p className="text-xs text-muted-foreground mt-0.5 flex items-center justify-end gap-1">
-              {fresh && (company.amount_raised !== null || company.date_source === "posted") && <Flame className="relative z-10 shrink-0 text-orange-400" size={13} />}
+              {fresh && (company.has_edgar || company.date_source === "announced" || company.date_source === "posted") && <Flame className="relative z-10 shrink-0 text-orange-400" size={13} />}
               <span>
-                {amount
-                  ? (company.has_edgar ? "raised " : "announced ")
-                  : (company.date_source === "posted" ? "last posted " : "last checked ")}
+                {company.has_edgar
+                  ? "raised "
+                  : (company.date_source === "announced" || (amount !== null && !company.has_edgar))
+                    ? "announced "
+                    : company.date_source === "posted"
+                      ? "last posted "
+                      : "last checked "}
                 {formatDate(company.date_filed)}
               </span>
             </p>
