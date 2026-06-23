@@ -82,11 +82,23 @@ export async function getHiringFeed(): Promise<Company[]> {
         WHERE ef.accelerator_id = a.id
           AND ef.date_filed >= NOW() - INTERVAL '90 days'
       )
-      -- Exclude companies with any known large raise
+      -- Exclude known large raises
       AND NOT EXISTS (
         SELECT 1 FROM edgar_filings ef
         WHERE ef.accelerator_id = a.id
           AND ef.amount_raised > 100000000
+      )
+      -- Early-stage filter: same logic as hiring sweep in careers.py
+      AND (
+        (a.accelerator IN ('yc', 'techstars')
+         AND a.batch IS NOT NULL
+         AND COALESCE(SUBSTRING(a.batch FROM '\d{4}'), '0')::int >= 2019)
+        OR (a.accelerator = 'a16z'
+            AND (a.stage IS NULL
+                 OR (a.stage NOT ILIKE '%growth%' AND a.stage NOT ILIKE '%exit%')))
+        OR (a.accelerator = 'sequoia'
+            AND (a.stage IS NULL OR a.stage IN ('Pre-Seed/Seed', 'Early')))
+        OR a.accelerator IN ('pear', 'lightspeed')
       )
     ORDER BY a.id
   `);
