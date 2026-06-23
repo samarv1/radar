@@ -1,13 +1,15 @@
 """
-Careers scraper for EDGAR-matched companies.
+Careers scraper.
 
-For each company matched in edgar_filings, tries Greenhouse → Lever → Ashby →
-Workable → BambooHR to find open job listings. Categorizes roles into
-Engineering / Product / GTM / Other and stores results in job_listings.
-Companies with no ATS found are marked 'not_found'.
+Default mode: scrapes companies that have an EDGAR filing ≤ $100M (daily pipeline).
+Hiring sweep mode (--hiring-sweep): scrapes ALL non-excluded accelerator companies
+regardless of EDGAR status — used weekly to populate the Hiring section.
+
+Tries Greenhouse → Lever → Ashby → Workable → BambooHR for each company.
+Categorizes roles into Engineering / Product / GTM / Other.
 
 Usage:
-    uv run python scrapers/careers.py [--limit N]
+    uv run python scrapers/careers.py [--limit N] [--hiring-sweep]
 """
 
 import re
@@ -259,13 +261,34 @@ def try_ashby(slug: str) -> tuple[list[dict], str] | None:
 
 # --- DB helpers ---
 
-def get_pending_companies(conn, rescrape_after_days: int | None = None) -> list[dict]:
-    if rescrape_after_days is not None:
-        staleness = f"OR a.careers_scraped_at < NOW() - INTERVAL '{rescrape_after_days} days'"
+def get_pending_companies(
+    conn,
+    rescrape_after_days: int | None = None,
+    hiring_sweep: bool = False,
+) -> list[dict]:
+    staleness = (
+        f"OR a.careers_scraped_at < NOW() - INTERVAL '{rescrape_after_days} days'"
+        if rescrape_after_days is not None
+        else ""
+    )
+    if hiring_sweep:
+        # Sweep all accelerator companies regardless of EDGAR status.
+        # Exclude companies with any known large raise (>$100M) to avoid
+        # Databricks/Waymo-scale companies flooding the Hiring section.
+        sql = f"""
+            SELECT DISTINCT a.id, a.name, a.website
+            FROM accelerator_companies a
+            WHERE a.is_excluded = FALSE
+              AND (a.careers_scraped_at IS NULL {staleness})
+              AND NOT EXISTS (
+                SELECT 1 FROM edgar_filings ef
+                WHERE ef.accelerator_id = a.id
+                  AND ef.amount_raised > 100000000
+              )
+            ORDER BY a.id
+        """
     else:
-        staleness = ""
-    with conn.cursor() as cur:
-        cur.execute(f"""
+        sql = f"""
             SELECT DISTINCT a.id, a.name, a.website
             FROM accelerator_companies a
             JOIN edgar_filings e ON e.accelerator_id = a.id
@@ -273,7 +296,9 @@ def get_pending_companies(conn, rescrape_after_days: int | None = None) -> list[
               AND (e.amount_raised IS NULL OR e.amount_raised <= 100000000)
               AND (a.careers_scraped_at IS NULL {staleness})
             ORDER BY a.id
-        """)
+        """
+    with conn.cursor() as cur:
+        cur.execute(sql)
         return [{"id": r[0], "name": r[1], "website": r[2]} for r in cur.fetchall()]
 
 
@@ -310,14 +335,15 @@ def update_careers_status(conn, company_id: int, ats: str, url: str | None):
 
 # --- Main ---
 
-def scrape(limit: int | None = None, rescrape_after_days: int | None = None):
+def scrape(limit: int | None = None, rescrape_after_days: int | None = None, hiring_sweep: bool = False):
     conn = get_connection()
     try:
-        companies = get_pending_companies(conn, rescrape_after_days)
+        companies = get_pending_companies(conn, rescrape_after_days, hiring_sweep=hiring_sweep)
         if limit:
             companies = companies[:limit]
 
-        print(f"Scraping careers for {len(companies)} companies (new or stale)...\n")
+        mode = "hiring sweep" if hiring_sweep else "EDGAR-matched"
+        print(f"Scraping careers for {len(companies)} companies [{mode}]...\n")
 
         found = not_found = 0
 
@@ -380,5 +406,7 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--limit", type=int, help="Only process first N companies")
+    parser.add_argument("--hiring-sweep", action="store_true", help="Scrape all accelerator companies regardless of EDGAR status")
+    parser.add_argument("--rescrape-after-days", type=int, help="Re-scrape companies last scraped more than N days ago")
     args = parser.parse_args()
-    scrape(limit=args.limit)
+    scrape(limit=args.limit, rescrape_after_days=args.rescrape_after_days, hiring_sweep=args.hiring_sweep)

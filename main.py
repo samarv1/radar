@@ -54,8 +54,8 @@ def run_daily():
 
 
 def run_weekly():
-    print("=== Careers (refresh stale, 7-day window) ===")
-    scrape_careers(rescrape_after_days=7)
+    print("=== Careers (hiring sweep — all accelerator companies) ===")
+    scrape_careers(hiring_sweep=True, rescrape_after_days=7)
 
     print("\n=== YC directory ===")
     scrape_yc()
