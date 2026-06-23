@@ -24,49 +24,57 @@ function formatAmount(n: number | null): string | null {
   return null;
 }
 
-function formatDate(s: string): string {
+function formatDate(s: string | null): string {
+  if (!s) return "—";
   return new Date(s).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 }
 
-function HiringStatus({ company }: { company: Company }) {
-  const hasData = company.careers_ats && company.careers_ats !== "not_found";
-
-  if (!hasData) {
-    return <span className="text-muted-foreground italic">unknown</span>;
+function OpenRoles({ company }: { company: Company }) {
+  if (company.amount_raised === null) {
+    if (!company.careers_url) return null;
+    return (
+      <div className="flex items-baseline gap-1.5 text-xs text-muted-foreground pt-1">
+        <a href={company.careers_url} target="_blank" rel="noopener noreferrer" className="relative z-10 hover:opacity-70 transition-opacity font-medium text-green-600">
+          apply ↗
+        </a>
+      </div>
+    );
   }
 
+  const hasData = company.careers_ats && company.careers_ats !== "not_found";
   const total = company.eng_count + company.gtm_count + company.product_count + company.other_count;
 
-  if (total === 0) {
-    return <span className="text-muted-foreground italic">no</span>;
+  let status: React.ReactNode;
+  if (!hasData) {
+    status = <span className="text-muted-foreground/50">—</span>;
+  } else if (total === 0) {
+    status = <span className="text-muted-foreground/50">none</span>;
+  } else {
+    status = company.careers_url ? (
+      <a href={company.careers_url} target="_blank" rel="noopener noreferrer" className="relative z-10 hover:opacity-70 transition-opacity font-medium text-green-600">
+        yes ↗
+      </a>
+    ) : <span className="font-medium text-green-600">yes</span>;
   }
 
-  const label = (
-    <span className="font-medium text-green-600">
-      yes{company.careers_url && <span className="text-muted-foreground font-normal ml-0.5">↗</span>}
-    </span>
+  return (
+    <div className="flex items-baseline gap-1.5 text-xs text-muted-foreground pt-1">
+      <span className="shrink-0">Open roles</span>
+      {status}
+    </div>
   );
-
-  return company.careers_url ? (
-    <a
-      href={company.careers_url}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="relative z-10 hover:opacity-70 transition-opacity"
-    >
-      {label}
-    </a>
-  ) : label;
 }
 
 export function CompanyCard({
   company,
   isBookmarked,
   onToggleBookmark,
+  hideBatch = false,
 }: {
   company: Company;
   isBookmarked: boolean;
   onToggleBookmark: () => void;
+  hideBatch?: boolean;
 }) {
   const amount = formatAmount(company.amount_raised);
   const fresh = isRecent(company.date_filed);
@@ -76,7 +84,7 @@ export function CompanyCard({
       <CardHeader className="pb-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 space-y-0.5">
-            <p className="text-base font-semibold leading-tight flex items-center gap-1.5">
+            <p className="text-base font-semibold leading-tight">
               {company.website ? (
                 <a
                   href={company.website}
@@ -87,30 +95,30 @@ export function CompanyCard({
                   {company.name}
                 </a>
               ) : company.name}
-              {fresh && (
-                <Flame className="relative z-10 shrink-0 text-orange-400" size={14} />
-              )}
             </p>
             <div className="flex items-center gap-1.5 flex-wrap">
               <span className="text-xs font-medium text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
                 {SOURCE_LABELS[company.accelerator] ?? "None / Unknown"}
               </span>
-              {company.batch && (
+              {!hideBatch && company.batch && (
                 <span className="text-xs text-muted-foreground">{company.batch}</span>
               )}
             </div>
-            <div className="flex items-baseline gap-1.5 text-xs text-muted-foreground pt-1">
-              <span className="shrink-0">Actively hiring?</span>
-              <HiringStatus company={company} />
-            </div>
+            <OpenRoles company={company} />
           </div>
 
           <div className="text-right shrink-0">
             {amount && (
               <p className="text-lg font-bold leading-none">{amount}</p>
             )}
-            <p className="text-xs text-muted-foreground mt-0.5">
-              {amount ? (company.has_edgar ? "raised " : "announced ") : ""}{formatDate(company.date_filed)}
+            <p className="text-xs text-muted-foreground mt-0.5 flex items-center justify-end gap-1">
+              {fresh && (company.amount_raised !== null || company.date_source === "posted") && <Flame className="relative z-10 shrink-0 text-orange-400" size={13} />}
+              <span>
+                {amount
+                  ? (company.has_edgar ? "raised " : "announced ")
+                  : (company.date_source === "posted" ? "last posted " : "last checked ")}
+                {formatDate(company.date_filed)}
+              </span>
             </p>
           </div>
         </div>

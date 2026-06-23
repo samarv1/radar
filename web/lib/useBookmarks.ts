@@ -38,5 +38,5 @@ export function useBookmarks() {
 
   const isBookmarked = useCallback((id: number) => bookmarked.has(id), [bookmarked]);
 
-  return { bookmarked, toggle, isBookmarked };
+  return { toggle, isBookmarked };
 }

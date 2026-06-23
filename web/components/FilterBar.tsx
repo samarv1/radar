@@ -76,6 +76,71 @@ function SinglePills<T extends string | number>({
   );
 }
 
+const ACCELERATOR_OPTIONS: [string, string][] = [
+  ["yc", "YC"],
+  ["a16z", "a16z"],
+  ["sequoia", "Sequoia"],
+  ["pear", "Pear"],
+  ["lightspeed", "Lightspeed"],
+  ["techstars", "Techstars"],
+  ["unknown", "None / Unknown"],
+];
+
+const HIRING_ACCELERATOR_OPTIONS: [string, string][] = [
+  ["yc", "YC"],
+  ["a16z", "a16z"],
+  ["sequoia", "Sequoia"],
+  ["pear", "Pear"],
+  ["lightspeed", "Lightspeed"],
+  ["techstars", "Techstars"],
+];
+
+const ROLE_TYPE_OPTIONS: [string, string][] = [
+  ["eng", "Eng"],
+  ["product", "Product"],
+  ["gtm", "GTM"],
+  ["other", "Other"],
+];
+
+const ROLE_LEVEL_OPTIONS: [string, string][] = [
+  ["intern", "Intern"],
+  ["new_grad", "New Grad"],
+  ["experienced", "Other"],
+];
+
+export function HiringFilterBar({
+  accelerators,
+  roleTypes,
+  roleLevels,
+  onAccelerators,
+  onRoleTypes,
+  onRoleLevels,
+}: {
+  accelerators: string[];
+  roleTypes: string[];
+  roleLevels: string[];
+  onAccelerators: (v: string[]) => void;
+  onRoleTypes: (v: string[]) => void;
+  onRoleLevels: (v: string[]) => void;
+}) {
+  return (
+    <div className="flex flex-wrap gap-8 mb-8">
+      <div>
+        <p className="text-xs text-muted-foreground mb-2 font-medium">Accelerator / Firm</p>
+        <Pills values={accelerators} onChange={onAccelerators} options={HIRING_ACCELERATOR_OPTIONS} />
+      </div>
+      <div>
+        <p className="text-xs text-muted-foreground mb-2 font-medium">Role Type</p>
+        <Pills values={roleTypes} onChange={onRoleTypes} options={ROLE_TYPE_OPTIONS} />
+      </div>
+      <div>
+        <p className="text-xs text-muted-foreground mb-2 font-medium">Role Level</p>
+        <Pills values={roleLevels} onChange={onRoleLevels} options={ROLE_LEVEL_OPTIONS} />
+      </div>
+    </div>
+  );
+}
+
 export function FilterBar({ filters, onChange }: Props) {
   return (
     <div className="flex flex-wrap gap-8 mb-8">
@@ -84,15 +149,7 @@ export function FilterBar({ filters, onChange }: Props) {
         <Pills
           values={filters.accelerators}
           onChange={(v) => onChange({ ...filters, accelerators: v })}
-          options={[
-            ["yc", "YC"],
-            ["a16z", "a16z"],
-            ["sequoia", "Sequoia"],
-            ["pear", "Pear"],
-            ["lightspeed", "Lightspeed"],
-            ["techstars", "Techstars"],
-            ["unknown", "None / Unknown"],
-          ]}
+          options={ACCELERATOR_OPTIONS}
         />
       </div>
 
