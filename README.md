@@ -22,9 +22,11 @@ The tool aggregates multiple free public signals into a single feed:
 
 **3. Cross-reference** — The highest-value signal comes from combining the two above. A company in any of the above directories that just filed a Form D = quality-filtered startup with fresh capital. We use CIK lookup + fuzzy name matching to link the two datasets.
 
-**4. Product Hunt launches** — We pull recent launches (last 90 days, ≥50 upvotes) from the PH API. A company that launched on PH recently is actively shipping and likely in growth mode — a good cold outreach trigger even without an EDGAR filing.
+**3b. Standalone EDGAR ("Other Technology")** — EDGAR filings in the `Other Technology` industry group that don't match any accelerator directory are surfaced directly as their own category. This catches VC-backed tech startups that have no accelerator affiliation. Each filing is enriched with an investor count parsed from the Form D XML (`enrich_edgar.py`) — a small count (under ~20) suggests an institutional round rather than crowdfunding or friends-and-family.
 
-**5. TechCrunch funding news** — We scrape TechCrunch's venture category via their WordPress API and parse funding announcements (company name, amount, round type). This catches companies that raised but aren't in any accelerator directory.
+**4. TechCrunch funding news** — We scrape TechCrunch's venture category via their WordPress API and parse funding announcements. Company names are extracted from article titles and body content (via hyperlink parsing), with slug-based fallback. This catches companies that raised but aren't in any accelerator directory. Companies that appear in both TC and EDGAR get the EDGAR filing as the canonical record ("raised"); TC-only companies are labeled "announced."
+
+**5. Product Hunt launches** — Pulled via GraphQL API (last 90 days, ≥50 upvotes) and used as a cross-reference validation signal to confirm EDGAR filers are real tech companies. Not surfaced as a standalone feed source (too noisy).
 
 ---
 
@@ -49,20 +51,28 @@ The tool aggregates multiple free public signals into a single feed:
 ```
 EDGAR broad scan ────────────────────────────────────┐
                                                       ├──► cross_reference.py ──► edgar_filings.accelerator_id
-Accelerator/VC scrapers ─────────────────────────────┘
-         │
-         └──► cik_lookup.py ──► accelerator_companies.edgar_cik
-                  │
-                  └──► edgar.py --mode targeted ──► precise per-company filings
+Accelerator/VC scrapers ─────────────────────────────┘         │
+         │                                                      │
+         └──► cik_lookup.py ──► accelerator_companies.edgar_cik │
+                                                                │
+validate_standalone.py ─────────────────────────────────────────┘
+  marks "Other Technology" filings (standalone_source='edgar')
+  marks TC/PH cross-reference matches (standalone_source='techcrunch')
 
-Product Hunt API ──────────────────────────────────────► ph_launches table
+enrich_edgar.py ──────────────────────────────────────► investor_count, vc_firm_signal
+
+Product Hunt API ──────────────────────────────────────► ph_launches (cross-reference only)
 
 TechCrunch WP API ─────────────────────────────────────► funding_news table
 ```
 
-All data lives in Postgres. `validate.py` checks data quality and acceptance criteria.
+The feed query in `web/lib/db.ts` unions four branches:
+1. **Accelerator + EDGAR** — highest confidence; shows accelerator badge + "raised" label
+2. **Standalone EDGAR** — "Other Technology" filings not matched to any accelerator; "None / Unknown" badge
+3. **TC-only** — TechCrunch announcements with no Form D yet; "None / Unknown" badge + "announced" label
+4. **Accelerator + TC announced** — accelerator-matched companies with a TC announcement but no Form D yet; shows real accelerator badge + "announced" label
 
-The frontend is a Next.js app (`web/`) that reads directly from the same Postgres database and renders a filterable feed of companies.
+The frontend is a Next.js app (`web/`) that reads directly from the same Postgres database and renders a filterable feed of companies. Filter options: Accelerator / Firm, Hiring status, days since filing, amount raised.
 
 ---
 
@@ -70,7 +80,7 @@ The frontend is a Next.js app (`web/`) that reads directly from the same Postgre
 
 The pipeline runs automatically via GitHub Actions:
 
-- **Daily (7am UTC):** EDGAR → CIK lookup → cross-reference → careers → Product Hunt → TechCrunch
+- **Daily (7am UTC):** EDGAR → CIK lookup → cross-reference → careers → Product Hunt → TechCrunch → standalone validation → EDGAR enrichment
 - **Monday:** Re-scrapes all accelerator directories (YC, a16z, Sequoia, Lightspeed, Pear, Techstars) + full PH backfill
 
 The database is hosted on Railway. GitHub Actions connects via the public Railway URL stored as `DATABASE_URL` in repo secrets.
