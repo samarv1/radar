@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { Radar, Bookmark, ChevronLeft, ChevronRight } from "lucide-react";
 import { FilterBar, DEFAULT_FILTERS, type Filters } from "@/components/FilterBar";
 import { CompanyCard } from "@/components/CompanyCard";
@@ -56,16 +56,25 @@ function byDateDesc(a: Company, b: Company) {
 
 export function FeedClient({
   companies,
+  hiringCompanies,
   lastUpdated,
 }: {
   companies: Company[];
+  hiringCompanies: Company[];
   lastUpdated: LastUpdated | null;
 }) {
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
   const [expandedOld, setExpandedOld] = useState(false);
+  const [expandedHiring, setExpandedHiring] = useState(false);
   const [view, setView] = useState<"feed" | "bookmarks">("feed");
   const [page, setPage] = useState(1);
   const { toggle, isBookmarked } = useBookmarks();
+  const isFirstRender = useRef(true);
+
+  useEffect(() => {
+    if (isFirstRender.current) { isFirstRender.current = false; return; }
+    window.scrollTo({ top: 0, behavior: "instant" });
+  }, [page]);
 
   function handleFiltersChange(f: Filters) {
     setFilters(f);
@@ -175,7 +184,7 @@ export function FeedClient({
                 {totalPages > 1 && (
                   <div className="flex items-center justify-center gap-3 mt-8">
                     <button
-                      onClick={() => { setPage((p) => Math.max(1, p - 1)); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                      onClick={() => setPage((p) => Math.max(1, p - 1))}
                       disabled={page === 1}
                       className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
                     >
@@ -185,7 +194,7 @@ export function FeedClient({
                       {page} / {totalPages}
                     </span>
                     <button
-                      onClick={() => { setPage((p) => Math.min(totalPages, p + 1)); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                      onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                       disabled={page === totalPages}
                       className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
                     >
@@ -209,6 +218,31 @@ export function FeedClient({
                 {expandedOld && (
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                     {oldCompanies.map((c) => (
+                      <CompanyCard
+                        key={c.id}
+                        company={c}
+                        isBookmarked={isBookmarked(c.id)}
+                        onToggleBookmark={() => toggle(c.id)}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {hiringCompanies.length > 0 && (
+              <div className="border-t border-border pt-8">
+                <button
+                  onClick={() => setExpandedHiring((prev) => !prev)}
+                  className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors mb-4"
+                >
+                  <span>{expandedHiring ? "▾" : "▸"}</span>
+                  Actively hiring · no recent raise ({hiringCompanies.length})
+                </button>
+
+                {expandedHiring && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {hiringCompanies.sort(byDateDesc).map((c) => (
                       <CompanyCard
                         key={c.id}
                         company={c}
