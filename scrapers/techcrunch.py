@@ -78,6 +78,7 @@ class _FirstExternalLink(HTMLParser):
     def __init__(self):
         super().__init__()
         self.result: str | None = None
+        self.website: str | None = None
         self._href: str | None = None
         self._text: list[str] = []
 
@@ -107,6 +108,7 @@ class _FirstExternalLink(HTMLParser):
             if (text and text[0].isupper() and 1 <= len(words) <= 4
                     and not _BAD_WORDS.intersection(w.lower() for w in words)):
                 self.result = text
+                self.website = self._href
             self._href = None
             self._text = []
 
@@ -117,6 +119,13 @@ def parse_company_from_content(content_html: str) -> str | None:
     parser = _FirstExternalLink()
     parser.feed(html.unescape(content_html[:3000]))
     return parser.result
+
+
+def parse_website_from_content(content_html: str) -> str | None:
+    """Extract company website URL from first external hyperlink in article body."""
+    parser = _FirstExternalLink()
+    parser.feed(html.unescape(content_html[:3000]))
+    return parser.website
 
 
 def normalize(name: str) -> str:
@@ -266,13 +275,14 @@ def upsert(conn, row: dict) -> bool:
     sql = """
         INSERT INTO funding_news
             (company_name, amount_usd, round_type, article_title, article_url,
-             published_at, source, accelerator_id)
+             published_at, source, accelerator_id, website)
         VALUES
             (%(company_name)s, %(amount_usd)s, %(round_type)s, %(article_title)s,
-             %(article_url)s, %(published_at)s, 'techcrunch', %(accelerator_id)s)
+             %(article_url)s, %(published_at)s, 'techcrunch', %(accelerator_id)s, %(website)s)
         ON CONFLICT (article_url) DO UPDATE SET
             accelerator_id = COALESCE(funding_news.accelerator_id, EXCLUDED.accelerator_id),
-            company_name = EXCLUDED.company_name
+            company_name = EXCLUDED.company_name,
+            website = COALESCE(funding_news.website, EXCLUDED.website)
         RETURNING (xmax = 0) AS inserted
     """
     with conn.cursor() as cur:
@@ -299,6 +309,7 @@ def scrape(days_back: int = 90):
             content_html = p.get("content", {}).get("rendered", "")
             # Content link is most reliable (TC hyperlinks company name in first paragraph).
             # Fall back to title parsing when content link is absent or too long.
+            website = parse_website_from_content(content_html)
             company = (
                 parse_company_from_content(content_html)
                 or parse_company(title)
@@ -322,6 +333,7 @@ def scrape(days_back: int = 90):
                 "article_url": p["link"],
                 "published_at": p["date"],
                 "accelerator_id": acc_id,
+                "website": website,
             }
 
             is_new = upsert(conn, row)

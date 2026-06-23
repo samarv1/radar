@@ -123,7 +123,7 @@ export async function getFeed(): Promise<Company[]> {
       SELECT DISTINCT ON (ef.company_name)
         -ef.id        AS id,
         ef.company_name AS name,
-        NULL::text    AS website,
+        COALESCE(fn.website, ph.website) AS website,
         ef.standalone_source AS accelerator,
         NULL::text    AS batch,
         NULL::text    AS careers_ats,
@@ -141,6 +141,16 @@ export async function getFeed(): Promise<Company[]> {
         0::int AS new_grad_count,
         NULL::text[] AS tags
       FROM edgar_filings ef
+      LEFT JOIN LATERAL (
+        SELECT website FROM funding_news
+        WHERE LOWER(TRIM(company_name)) = LOWER(TRIM(ef.company_name))
+        ORDER BY created_at DESC LIMIT 1
+      ) fn ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT website FROM ph_launches
+        WHERE LOWER(TRIM(product_name)) = LOWER(TRIM(ef.company_name))
+        ORDER BY created_at DESC LIMIT 1
+      ) ph ON TRUE
       WHERE ef.accelerator_id IS NULL
         AND ef.standalone_source IS NOT NULL
         AND (ef.amount_raised IS NULL OR ef.amount_raised <= 100000000)
@@ -157,7 +167,7 @@ export async function getFeed(): Promise<Company[]> {
       SELECT DISTINCT ON (fn.company_name)
         fn.id + 1000000 AS id,
         fn.company_name AS name,
-        NULL::text      AS website,
+        fn.website      AS website,
         'techcrunch'::text AS accelerator,
         NULL::text      AS batch,
         NULL::text      AS careers_ats,
