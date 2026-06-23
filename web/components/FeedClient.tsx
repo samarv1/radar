@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useEffect, useRef } from "react";
 import { Radar, Bookmark, ChevronLeft, ChevronRight } from "lucide-react";
-import { FilterBar, HiringFilterBar, DEFAULT_FILTERS, type Filters } from "@/components/FilterBar";
+import { FilterBar, HiringFilterBar, DEFAULT_FILTERS, VERTICAL_KEYWORDS, type Filters } from "@/components/FilterBar";
 import { CompanyCard } from "@/components/CompanyCard";
 import { useBookmarks } from "@/lib/useBookmarks";
 import type { Company } from "@/lib/db";
@@ -20,6 +20,19 @@ function hiringStatus(c: Company): "yes" | "no" | "unknown" {
 
 const KNOWN_ACCELERATORS = ["yc", "a16z", "sequoia", "pear", "lightspeed", "techstars"];
 
+function matchesVertical(tags: string[] | null, verticals: string[]): boolean {
+  const hasNoTags = !tags || tags.length === 0;
+  if (verticals.includes("unknown") && hasNoTags) return true;
+  if (hasNoTags) return false;
+  return verticals.some(
+    (v) =>
+      v !== "unknown" &&
+      VERTICAL_KEYWORDS[v].some((kw) =>
+        tags.some((t) => t.toLowerCase().includes(kw))
+      )
+  );
+}
+
 function applyFilters(companies: Company[], f: Filters): Company[] {
   return companies.filter((c) => {
     if (f.accelerators.length > 0) {
@@ -31,22 +44,25 @@ function applyFilters(companies: Company[], f: Filters): Company[] {
 
     if (f.hiring.length > 0 && !f.hiring.includes(hiringStatus(c))) return false;
 
-    if (f.daysMax !== null) {
+    if (f.days.length > 0) {
       const daysAgo = (Date.now() - new Date(c.date_filed).getTime()) / (1000 * 60 * 60 * 24);
-      if (daysAgo > f.daysMax) return false;
+      if (daysAgo > Math.max(...f.days)) return false;
     }
 
-    if (f.amountMax !== null) {
-      if (c.amount_raised === null || c.amount_raised > f.amountMax) return false;
+    if (f.amounts.length > 0) {
+      if (c.amount_raised === null || c.amount_raised > Math.max(...f.amounts)) return false;
     }
+
+    if (f.verticals.length > 0 && !matchesVertical(c.tags, f.verticals)) return false;
 
     return true;
   });
 }
 
-function applyHiringFilters(companies: Company[], accelerators: string[], roleTypes: string[], roleLevels: string[]): Company[] {
+function applyHiringFilters(companies: Company[], accelerators: string[], roleTypes: string[], roleLevels: string[], verticals: string[]): Company[] {
   return companies.filter((c) => {
     if (accelerators.length > 0 && !accelerators.includes(c.accelerator)) return false;
+    if (verticals.length > 0 && !matchesVertical(c.tags, verticals)) return false;
     if (roleTypes.length > 0) {
       const hasType = roleTypes.some((r) => {
         if (r === "eng") return c.eng_count > 0;
@@ -129,6 +145,7 @@ export function FeedClient({
   const [hiringAccelerators, setHiringAccelerators] = useState<string[]>([]);
   const [hiringRoleTypes, setHiringRoleTypes] = useState<string[]>([]);
   const [hiringRoleLevels, setHiringRoleLevels] = useState<string[]>([]);
+  const [hiringVerticals, setHiringVerticals] = useState<string[]>([]);
   const [expandedOld, setExpandedOld] = useState(false);
   const [tab, setTab] = useState<"raised" | "hiring">("raised");
   const [view, setView] = useState<"feed" | "bookmarks">("feed");
@@ -162,6 +179,11 @@ export function FeedClient({
     setHiringPage(1);
   }
 
+  function handleHiringVerticalsChange(v: string[]) {
+    setHiringVerticals(v);
+    setHiringPage(1);
+  }
+
   const visible = applyFilters(companies, filters);
   // eslint-disable-next-line react-hooks/purity
   const now = useMemo(() => Date.now(), []);
@@ -177,7 +199,7 @@ export function FeedClient({
   const raisedTotalPages = Math.ceil(recent.length / PAGE_SIZE);
   const pagedRecent = recent.slice((raisedPage - 1) * PAGE_SIZE, raisedPage * PAGE_SIZE);
 
-  const filteredHiring = applyHiringFilters(hiringCompanies, hiringAccelerators, hiringRoleTypes, hiringRoleLevels).sort(byHiringDate);
+  const filteredHiring = applyHiringFilters(hiringCompanies, hiringAccelerators, hiringRoleTypes, hiringRoleLevels, hiringVerticals).sort(byHiringDate);
   const hiringTotalPages = Math.ceil(filteredHiring.length / PAGE_SIZE);
   const pagedHiring = filteredHiring.slice((hiringPage - 1) * PAGE_SIZE, hiringPage * PAGE_SIZE);
 
@@ -326,9 +348,11 @@ export function FeedClient({
                 accelerators={hiringAccelerators}
                 roleTypes={hiringRoleTypes}
                 roleLevels={hiringRoleLevels}
+                verticals={hiringVerticals}
                 onAccelerators={handleHiringAccelChange}
                 onRoleTypes={handleHiringRoleTypesChange}
                 onRoleLevels={handleHiringRoleLevelsChange}
+                onVerticals={handleHiringVerticalsChange}
               />
               {filteredHiring.length === 0 ? (
                 <p className="text-muted-foreground text-sm text-center py-12">

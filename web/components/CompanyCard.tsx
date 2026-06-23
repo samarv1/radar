@@ -1,8 +1,44 @@
+"use client";
+
 import { Flame, Bookmark } from "lucide-react";
 import { Card, CardHeader } from "@/components/ui/card";
 import type { Company } from "@/lib/db";
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+
+const VERTICAL_KEYWORDS: Record<string, string[]> = {
+  ai:       ["ai", "artificial intelligence", "machine learning", "generative ai", "llm", "deep learning", "nlp", "computer vision"],
+  fintech:  ["fintech", "payments", "crypto", "blockchain", "banking", "insurtech", "lending", "wealth"],
+  health:   ["health", "biotech", "pharma", "medical", "clinical", "genomics", "drug", "therapy", "mental health"],
+  b2b:      ["saas", "b2b", "enterprise"],
+  devtools: ["developer tools", "developer tool", "infrastructure", "open source", "devops", "security", "observability", "api", "platform engineering"],
+  climate:  ["climate", "cleantech", "sustainability", "energy", "carbon", "renewable"],
+  consumer: ["consumer", "e-commerce", "marketplace", "gaming", "social", "entertainment", "media", "retail"],
+  edtech:   ["education", "edtech", "learning", "upskilling"],
+  hardware: ["hardware", "robotics", "iot", "internet of things", "manufacturing", "semiconductors", "aerospace"],
+};
+
+const VERTICAL_LABELS: Record<string, string> = {
+  ai: "AI / ML",
+  fintech: "Fintech",
+  health: "Health",
+  b2b: "B2B / SaaS",
+  devtools: "Dev Tools",
+  climate: "Climate",
+  consumer: "Consumer",
+  edtech: "EdTech",
+  hardware: "Hardware",
+};
+
+function getVerticals(tags: string[] | null): string[] {
+  if (!tags || tags.length === 0) return [];
+  return Object.entries(VERTICAL_KEYWORDS)
+    .filter(([, keywords]) =>
+      keywords.some((kw) => tags.some((t) => t.toLowerCase().includes(kw)))
+    )
+    .map(([key]) => key)
+    .slice(0, 3);
+}
 
 function isRecent(date_filed: string): boolean {
   return Date.now() - new Date(date_filed).getTime() < THIRTY_DAYS_MS;
@@ -78,6 +114,7 @@ export function CompanyCard({
 }) {
   const amount = formatAmount(company.amount_raised);
   const fresh = isRecent(company.date_filed);
+  const verticals = getVerticals(company.tags);
 
   return (
     <Card className={`relative transition-shadow ${company.website ? "hover:shadow-md" : ""}`}>
@@ -104,6 +141,15 @@ export function CompanyCard({
                 <span className="text-xs text-muted-foreground">{company.batch}</span>
               )}
             </div>
+            {verticals.length > 0 && (
+              <div className="flex flex-wrap gap-1 pt-1">
+                {verticals.map((v) => (
+                  <span key={v} className="text-xs text-blue-600 bg-blue-50 dark:text-blue-400 dark:bg-blue-950/50 px-1.5 py-0.5 rounded">
+                    {VERTICAL_LABELS[v]}
+                  </span>
+                ))}
+              </div>
+            )}
             <OpenRoles company={company} />
           </div>
 
