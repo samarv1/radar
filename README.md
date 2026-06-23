@@ -8,7 +8,10 @@ The core insight: the first 60–90 days after a startup closes a funding round 
 
 ## What It Does
 
-The tool aggregates multiple free public signals into a single feed:
+The tool aggregates multiple free public signals into two feeds:
+
+### Raised tab
+Companies that have recently closed a funding round, surfaced from:
 
 **1. SEC EDGAR Form D filings** — Any US company that raises venture capital must file a Form D with the SEC within 15 days of closing. This is fully public, completely free, and often surfaces deals weeks before they hit TechCrunch. We poll the EDGAR API and filter for US operating companies (excluding real estate, oil & gas, banking, and financial partnerships). Companies that raised over $100M are excluded — cold outreach loses its edge at that stage.
 
@@ -28,6 +31,14 @@ The tool aggregates multiple free public signals into a single feed:
 
 **5. Product Hunt launches** — Pulled via GraphQL API (last 90 days, ≥50 upvotes) and used as a cross-reference validation signal to confirm EDGAR filers are real tech companies. Not surfaced as a standalone feed source (too noisy).
 
+### Actively Hiring tab
+Early-stage accelerator-backed companies with confirmed open roles scraped directly from their ATS. A company appears here when:
+- It has live job listings on Greenhouse, Lever, Ashby, Workable, or BambooHR
+- It does not already appear in the Raised tab (no EDGAR filing in the last 90 days)
+- It has not raised over $100M
+
+Role counts are broken down by type (Eng/Product/GTM/Other) and level (Intern/New Grad), enabling targeted filtering. Cards show a grad cap icon when intern or new grad roles are available, and an apply link when a confirmed ATS URL exists.
+
 ---
 
 ## Data Sources
@@ -35,7 +46,7 @@ The tool aggregates multiple free public signals into a single feed:
 | Source | Method |
 |--------|--------|
 | SEC EDGAR Form D | EDGAR full-text search + submissions API |
-| Y Combinator | Scrape `ycombinator.com/companies` |
+| Y Combinator | Scrape `ycombinator.com/companies` + Algolia hiring signal |
 | a16z | RSS + portfolio page |
 | Sequoia | WordPress REST API |
 | Pear VC | Portfolio page scrape |
@@ -43,6 +54,7 @@ The tool aggregates multiple free public signals into a single feed:
 | Techstars | Typesense API (public token) |
 | Product Hunt | GraphQL API (requires free dev token) |
 | TechCrunch | WordPress REST API |
+| ATS (Greenhouse/Lever/Ashby/Workable/BambooHR) | Public job board APIs |
 
 ---
 
@@ -60,19 +72,29 @@ validate_standalone.py ───────────────────
   marks TC/PH cross-reference matches (standalone_source='techcrunch')
 
 enrich_edgar.py ──────────────────────────────────────► investor_count, vc_firm_signal
+enrich_websites.py ───────────────────────────────────► accelerator_companies.website (Lightspeed, Sequoia)
 
 Product Hunt API ──────────────────────────────────────► ph_launches (cross-reference only)
-
 TechCrunch WP API ─────────────────────────────────────► funding_news table
+
+yc_hiring.py ─────────────────────────────────────────► resets careers_scraped_at for YC isHiring companies
+careers.py ───────────────────────────────────────────► job_listings (Greenhouse/Lever/Ashby/Workable/BambooHR)
+  --hiring-sweep: all early-stage accelerator companies regardless of EDGAR status
+  --rescrape-after-days N: re-check companies whose data is older than N days
+  --workers N: parallel scraping (default 1)
 ```
 
-The feed query in `web/lib/db.ts` unions four branches:
+The careers scraper uses **diff-based sync**: new job IDs get `first_seen_at = NOW()`; removed IDs are deleted; existing rows keep their original `first_seen_at`. This preserves job history across rescrapes and enables accurate "last posted" dating.
+
+The feed query in `web/lib/db.ts` unions four branches for the Raised tab:
 1. **Accelerator + EDGAR** — highest confidence; shows accelerator badge + "raised" label
 2. **Standalone EDGAR** — "Other Technology" filings not matched to any accelerator; "None / Unknown" badge
 3. **TC-only** — TechCrunch announcements with no Form D yet; "None / Unknown" badge + "announced" label
 4. **Accelerator + TC announced** — accelerator-matched companies with a TC announcement but no Form D yet; shows real accelerator badge + "announced" label
 
-The frontend is a Next.js app (`web/`) that reads directly from the same Postgres database and renders a filterable feed of companies. Filter options: Accelerator / Firm, Hiring status, days since filing, amount raised.
+The Actively Hiring tab is a separate query (`getHiringFeed`) that joins `accelerator_companies` with `job_listings` and applies early-stage filters per accelerator.
+
+The frontend is a Next.js app (`web/`) that reads directly from the same Postgres database and renders filterable feeds. Raised tab filters: Accelerator, Hiring status, days since filing, amount raised. Hiring tab filters: Accelerator, Role Type (Eng/Product/GTM/Other), Role Level (Intern/New Grad/Other).
 
 ---
 
@@ -80,14 +102,31 @@ The frontend is a Next.js app (`web/`) that reads directly from the same Postgre
 
 The pipeline runs automatically via GitHub Actions:
 
-- **Daily (7am UTC):** EDGAR → CIK lookup → cross-reference → careers → Product Hunt → TechCrunch → standalone validation → EDGAR enrichment
-- **Monday:** Re-scrapes all accelerator directories (YC, a16z, Sequoia, Lightspeed, Pear, Techstars) + full PH backfill
-
-The database is hosted on Railway. GitHub Actions connects via the public Railway URL stored as `DATABASE_URL` in repo secrets.
+- **Daily (7am UTC):** EDGAR → CIK lookup → cross-reference → careers (EDGAR-matched) → a16z Build newsletter → YC hiring signal → careers sweep (new companies only) → Product Hunt → TechCrunch → standalone validation → EDGAR enrichment
+- **Weekly (Monday):** Re-scrapes all accelerator directories (YC, a16z, Sequoia, Lightspeed, Pear, Techstars) + 30-day careers rescrape + full PH backfill
+- **Monday 12pm UTC:** Standalone 30-day careers rescrape (all accelerator companies, stale > 30 days)
 
 To trigger a run manually:
 ```bash
-gh workflow run pipeline.yml -f mode=daily   # or: weekly, yc, a16z, sequoia, lightspeed, pear, techstars
+gh workflow run pipeline.yml -f mode=daily
+gh workflow run pipeline.yml -f mode=weekly
+gh workflow run pipeline.yml -f mode=careers-rescrape
+# or: yc, a16z, sequoia, lightspeed, pear, techstars
+```
+
+---
+
+## Database Migrations
+
+Run migrations in order when setting up or upgrading:
+
+```bash
+uv run python db/migrate_v2.py   # funding_news table
+uv run python db/migrate_v3.py   # accelerator_companies.stage
+uv run python db/migrate_v4.py   # job_listings table
+uv run python db/migrate_v5.py   # job_listings.scraped_at
+uv run python db/migrate_v6.py   # job_listings.posted_at
+uv run python db/migrate_v7.py   # job_listings.first_seen_at
 ```
 
 ---
@@ -102,6 +141,15 @@ cp .env.example .env   # set DATABASE_URL (Railway public URL) and PH_API_TOKEN
 uv run python main.py --mode daily
 uv run python main.py --mode weekly
 uv run python validate.py
+
+# Careers scraper options:
+uv run python scrapers/careers.py --hiring-sweep --workers 8
+uv run python scrapers/careers.py --hiring-sweep --rescrape-after-days 30 --workers 8
+uv run python scrapers/yc_hiring.py   # reset YC isHiring companies for next careers sweep
+
+# Enrich missing website URLs (run once after scraping Lightspeed/Sequoia):
+uv run python scrapers/enrich_websites.py --accelerator lightspeed
+uv run python scrapers/enrich_websites.py --accelerator sequoia
 ```
 
 **Frontend:**

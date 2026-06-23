@@ -25,6 +25,7 @@ from scrapers.techstars import scrape as scrape_techstars
 from scrapers.validate_standalone import run as run_validate_standalone
 from scrapers.enrich_edgar import run as run_enrich_edgar
 from scrapers.yc import scrape as scrape_yc
+from scrapers.yc_hiring import scrape as scrape_yc_hiring
 
 
 def run_daily():
@@ -37,8 +38,19 @@ def run_daily():
     print("\n=== Cross-reference ===")
     run_cross_reference()
 
-    print("\n=== Careers ===")
+    print("\n=== Careers (EDGAR-matched) ===")
     scrape_careers()
+
+    print("\n=== a16z Build newsletter ===")
+    scrape_a16z_build(days_back=2)
+
+    print("\n=== YC hiring signal ===")
+    scrape_yc_hiring()
+
+    print("\n=== Careers (new accelerator companies) ===")
+    # Only touches companies with NULL careers_scraped_at — fast daily pass.
+    # a16z_build and yc_hiring reset careers_scraped_at for signalled companies.
+    scrape_careers(hiring_sweep=True, workers=8)
 
     print("\n=== Product Hunt (last 2 days) ===")
     scrape_ph(days_back=2)
@@ -54,13 +66,10 @@ def run_daily():
 
 
 def run_weekly():
-    print("=== Careers (hiring sweep — all accelerator companies) ===")
-    scrape_careers(hiring_sweep=True, rescrape_after_days=7)
-
-    print("\n=== YC directory ===")
+    print("=== YC directory ===")
     scrape_yc()
 
-    print("\n=== a16z Build ===")
+    print("\n=== a16z directory ===")
     scrape_a16z()
 
     print("\n=== Sequoia ===")
@@ -75,11 +84,12 @@ def run_weekly():
     print("\n=== Techstars ===")
     scrape_techstars()
 
+    print("\n=== Careers (30-day rescrape) ===")
+    # Re-checks companies whose hiring status is >30 days stale.
+    scrape_careers(hiring_sweep=True, rescrape_after_days=30, workers=8)
+
     print("\n=== Product Hunt full backfill (90 days) ===")
     scrape_ph(days_back=90)
-
-    print("\n=== a16z Build newsletter ===")
-    scrape_a16z_build(days_back=30)
 
 
 SCRAPERS = {
@@ -89,6 +99,7 @@ SCRAPERS = {
     "lightspeed": scrape_lightspeed,
     "pear":      scrape_pear,
     "techstars": scrape_techstars,
+    "careers-rescrape": lambda: scrape_careers(hiring_sweep=True, rescrape_after_days=30, workers=8),
 }
 
 if __name__ == "__main__":
