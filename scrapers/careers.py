@@ -15,6 +15,8 @@ Usage:
 import re
 import sys
 import time
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urlparse
 
 import requests
@@ -22,10 +24,25 @@ import requests
 sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.dirname(__file__)))
 from db.connection import get_connection
 
+_print_lock = threading.Lock()
+_ashby_semaphore = threading.Semaphore(3)  # max 3 concurrent Ashby calls
+
 HEADERS = {"User-Agent": "startup-recruiting-tool contact@example.com"}
 SLEEP = 0.3
 
 # --- Role categorization ---
+
+INTERN = re.compile(
+    r"\b(intern|internship|co-?op|apprentice|apprenticeship)\b",
+    re.IGNORECASE,
+)
+
+NEW_GRAD = re.compile(
+    r"\b(new.?grad|new graduate|recent grad|recent graduate|entry.?level|"
+    r"university grad|campus hire|junior|associate engineer|associate software|"
+    r"associate developer|associate data|associate product)\b",
+    re.IGNORECASE,
+)
 
 ENGINEERING = re.compile(
     r"\b(engineer|engineering|developer|software|backend|front.?end|full.?stack|"
@@ -53,6 +70,10 @@ GTM = re.compile(
 
 
 def categorize(title: str) -> str:
+    if INTERN.search(title):
+        return "intern"
+    if NEW_GRAD.search(title):
+        return "new_grad"
     if ENGINEERING.search(title):
         return "engineering"
     if PRODUCT.search(title):
@@ -121,6 +142,7 @@ def try_greenhouse(slug: str) -> tuple[list[dict], str] | None:
                 "department": (j.get("departments") or [{}])[0].get("name", "") if j.get("departments") else "",
                 "location": (j.get("offices") or [{}])[0].get("name", "") if j.get("offices") else "",
                 "job_url": j.get("absolute_url", ""),
+                "posted_at": j.get("updated_at"),
             })
         return results, url
     except Exception:
@@ -140,12 +162,18 @@ def try_lever(slug: str) -> tuple[list[dict], str] | None:
             return None
         results = []
         for j in data:
+            created_ms = j.get("createdAt")
+            posted_at = None
+            if created_ms:
+                from datetime import datetime, timezone
+                posted_at = datetime.fromtimestamp(created_ms / 1000, tz=timezone.utc).isoformat()
             results.append({
                 "job_id": j.get("id", ""),
                 "title": j.get("text", ""),
                 "department": j.get("categories", {}).get("department", ""),
                 "location": j.get("categories", {}).get("location", ""),
                 "job_url": j.get("hostedUrl", ""),
+                "posted_at": posted_at,
             })
         if not results:
             return None
@@ -159,7 +187,7 @@ ASHBY_QUERY = """
 query ApiJobBoardWithTeams($organizationHostedJobsPageName: String!) {
   jobBoardWithTeams(organizationHostedJobsPageName: $organizationHostedJobsPageName) {
     teams { id name }
-    jobPostings { id title locationName teamId }
+    jobPostings { id title locationName teamId publishedAt }
   }
 }
 """
@@ -190,6 +218,7 @@ def try_workable(slug: str) -> tuple[list[dict], str] | None:
                 "department": j.get("department", ""),
                 "location": (j.get("location") or {}).get("city", ""),
                 "job_url": f"{board_url}/j/{j.get('shortcode', '')}",
+                "posted_at": j.get("created"),
             })
         return results, board_url
     except Exception:
@@ -217,6 +246,7 @@ def try_bamboohr(slug: str) -> tuple[list[dict], str] | None:
                 "department": j.get("department", {}).get("label", "") if isinstance(j.get("department"), dict) else str(j.get("department", "")),
                 "location": j.get("location", {}).get("label", "") if isinstance(j.get("location"), dict) else str(j.get("location", "")),
                 "job_url": f"{board_url}/{jid}",
+                "posted_at": None,
             })
         return results, board_url
     except Exception:
@@ -224,39 +254,46 @@ def try_bamboohr(slug: str) -> tuple[list[dict], str] | None:
 
 
 def try_ashby(slug: str) -> tuple[list[dict], str] | None:
-    try:
-        r = requests.post(
-            ASHBY_GRAPHQL,
-            json={"operationName": "ApiJobBoardWithTeams", "variables": {"organizationHostedJobsPageName": slug}, "query": ASHBY_QUERY},
-            headers={**HEADERS, "Content-Type": "application/json"},
-            timeout=10,
-        )
-        time.sleep(SLEEP)
-        if r.status_code != 200:
+    with _ashby_semaphore:
+        try:
+            for attempt in range(3):
+                r = requests.post(
+                    ASHBY_GRAPHQL,
+                    json={"operationName": "ApiJobBoardWithTeams", "variables": {"organizationHostedJobsPageName": slug}, "query": ASHBY_QUERY},
+                    headers={**HEADERS, "Content-Type": "application/json"},
+                    timeout=10,
+                )
+                time.sleep(SLEEP)
+                if r.status_code == 429:
+                    time.sleep(10 * (3 ** attempt))  # 10s, 30s, 90s
+                    continue
+                break
+            if r.status_code != 200:
+                return None
+            data = r.json()
+            if "errors" in data:
+                return None
+            jb = data.get("data", {}).get("jobBoardWithTeams")
+            if not jb:
+                return None
+            teams = {t["id"]: t["name"] for t in jb.get("teams", [])}
+            jobs_raw = jb.get("jobPostings", [])
+            if not isinstance(jobs_raw, list):
+                return None
+            ats_url = f"https://jobs.ashbyhq.com/{slug}"
+            results = []
+            for j in jobs_raw:
+                results.append({
+                    "job_id": j.get("id", ""),
+                    "title": j.get("title", ""),
+                    "department": teams.get(j.get("teamId", ""), ""),
+                    "location": j.get("locationName", ""),
+                    "job_url": f"{ats_url}/{j.get('id', '')}",
+                    "posted_at": j.get("publishedAt"),
+                })
+            return results, ats_url
+        except Exception:
             return None
-        data = r.json()
-        if "errors" in data:
-            return None
-        jb = data.get("data", {}).get("jobBoardWithTeams")
-        if not jb:
-            return None
-        teams = {t["id"]: t["name"] for t in jb.get("teams", [])}
-        jobs_raw = jb.get("jobPostings", [])
-        if not isinstance(jobs_raw, list):
-            return None
-        ats_url = f"https://jobs.ashbyhq.com/{slug}"
-        results = []
-        for j in jobs_raw:
-            results.append({
-                "job_id": j.get("id", ""),
-                "title": j.get("title", ""),
-                "department": teams.get(j.get("teamId", ""), ""),
-                "location": j.get("locationName", ""),
-                "job_url": f"{ats_url}/{j.get('id', '')}",
-            })
-        return results, ats_url
-    except Exception:
-        return None
 
 
 # --- DB helpers ---
@@ -272,14 +309,13 @@ def get_pending_companies(
         else ""
     )
     if hiring_sweep:
-        # Sweep accelerator companies regardless of EDGAR status, but filter
-        # to early-stage companies to avoid Amplitude/Reddit-scale companies.
-        #
+        # Sweep accelerator companies regardless of EDGAR status.
+        # Exclude companies with known large raises (>$100M EDGAR filing).
         # Per-accelerator strategy:
-        #   YC/Techstars  — batch year >= 2019 (cuts pre-2019 cohorts with many large exits)
+        #   YC/Techstars  — all (no batch filter; $100M check handles large exits)
         #   a16z          — exclude stage containing 'Growth' or 'EXIT'
-        #   Sequoia       — only Pre-Seed/Seed or Early stage (others are established)
-        #   Pear/Lightspeed — include all (small focused firms, no legacy large portfolio)
+        #   Sequoia       — only Pre-Seed/Seed or Early stage
+        #   Pear/Lightspeed — include all
         sql = f"""
             SELECT DISTINCT a.id, a.name, a.website
             FROM accelerator_companies a
@@ -291,9 +327,7 @@ def get_pending_companies(
                   AND ef.amount_raised > 100000000
               )
               AND (
-                (a.accelerator IN ('yc', 'techstars')
-                 AND a.batch IS NOT NULL
-                 AND COALESCE(SUBSTRING(a.batch FROM '\\d{{4}}'), '0')::int >= 2019)
+                a.accelerator IN ('yc', 'techstars')
                 OR (a.accelerator = 'a16z'
                     AND (a.stage IS NULL
                          OR (a.stage NOT ILIKE '%growth%' AND a.stage NOT ILIKE '%exit%')))
@@ -323,21 +357,51 @@ def clear_jobs(conn, company_id: int):
         cur.execute("DELETE FROM job_listings WHERE company_id = %s", (company_id,))
 
 
-def insert_jobs(conn, company_id: int, ats: str, jobs: list[dict]):
-    sql = """
-        INSERT INTO job_listings
-            (company_id, ats, job_id, title, department, location, category, job_url)
-        VALUES
-            (%s, %s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (company_id, ats, job_id) DO NOTHING
-    """
+def sync_jobs(conn, company_id: int, ats: str, jobs: list[dict]):
+    """Diff-based upsert: insert new jobs (preserving first_seen_at), delete removed ones."""
+    fresh_ids = {j["job_id"] for j in jobs}
+
     with conn.cursor() as cur:
-        for j in jobs:
-            cat = categorize(j["title"])
-            cur.execute(sql, (
-                company_id, ats, j["job_id"], j["title"],
-                j["department"], j["location"], cat, j["job_url"],
-            ))
+        # Get existing job_ids for this company
+        cur.execute(
+            "SELECT job_id FROM job_listings WHERE company_id = %s AND ats = %s",
+            (company_id, ats),
+        )
+        existing_ids = {row[0] for row in cur.fetchall()}
+
+        # Remove jobs that disappeared from the ATS
+        removed = existing_ids - fresh_ids
+        if removed:
+            cur.execute(
+                "DELETE FROM job_listings WHERE company_id = %s AND ats = %s AND job_id = ANY(%s)",
+                (company_id, ats, list(removed)),
+            )
+
+        # Insert new jobs (first_seen_at = NOW() marks when we first noticed them)
+        new_jobs = [j for j in jobs if j["job_id"] not in existing_ids]
+        if new_jobs:
+            insert_sql = """
+                INSERT INTO job_listings
+                    (company_id, ats, job_id, title, department, location, category,
+                     job_url, posted_at, first_seen_at)
+                VALUES
+                    (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                ON CONFLICT (company_id, ats, job_id) DO NOTHING
+            """
+            for j in new_jobs:
+                cat = categorize(j["title"])
+                cur.execute(insert_sql, (
+                    company_id, ats, j["job_id"], j["title"],
+                    j["department"], j["location"], cat, j["job_url"],
+                    j.get("posted_at"),
+                ))
+
+        # Update scraped_at on all remaining (still-active) jobs
+        if fresh_ids:
+            cur.execute(
+                "UPDATE job_listings SET scraped_at = NOW() WHERE company_id = %s AND ats = %s",
+                (company_id, ats),
+            )
 
 
 def update_careers_status(conn, company_id: int, ats: str, url: str | None):
@@ -351,71 +415,108 @@ def update_careers_status(conn, company_id: int, ats: str, url: str | None):
 
 # --- Main ---
 
-def scrape(limit: int | None = None, rescrape_after_days: int | None = None, hiring_sweep: bool = False):
+def _scrape_one(company: dict, total: int, idx: int) -> bool:
+    """Scrape a single company using its own DB connection. Returns True if found."""
+    name = company["name"]
+    website = company["website"]
+    cid = company["id"]
+    slugs = derive_slugs(name, website)
+
+    matched_ats = None
+    matched_jobs = []
+    matched_url = None
+
+    for ats_name, try_fn in [
+        ("greenhouse", try_greenhouse),
+        ("lever", try_lever),
+        ("ashby", try_ashby),
+        ("workable", try_workable),
+        ("bamboohr", try_bamboohr),
+    ]:
+        for slug in slugs:
+            result = try_fn(slug)
+            if result is not None:
+                jobs, url = result
+                matched_ats = ats_name
+                matched_jobs = jobs
+                matched_url = url
+                break
+        if matched_ats:
+            break
+
+    conn = get_connection()
+    try:
+        if matched_ats:
+            sync_jobs(conn, cid, matched_ats, matched_jobs)
+            update_careers_status(conn, cid, matched_ats, matched_url)
+            conn.commit()
+
+            cats = {}
+            for j in matched_jobs:
+                c = categorize(j["title"])
+                cats[c] = cats.get(c, 0) + 1
+            summary = " | ".join(f"{k}:{v}" for k, v in sorted(cats.items()))
+            with _print_lock:
+                print(f"[{idx}/{total}] {name} → {matched_ats} ({len(matched_jobs)} jobs) [{summary}]")
+            return True
+        else:
+            clear_jobs(conn, cid)
+            update_careers_status(conn, cid, "not_found", None)
+            conn.commit()
+            with _print_lock:
+                print(f"[{idx}/{total}] {name} → not found")
+            return False
+    finally:
+        conn.close()
+
+
+def scrape(
+    limit: int | None = None,
+    rescrape_after_days: int | None = None,
+    hiring_sweep: bool = False,
+    workers: int = 1,
+):
     conn = get_connection()
     try:
         companies = get_pending_companies(conn, rescrape_after_days, hiring_sweep=hiring_sweep)
-        if limit:
-            companies = companies[:limit]
-
-        mode = "hiring sweep" if hiring_sweep else "EDGAR-matched"
-        print(f"Scraping careers for {len(companies)} companies [{mode}]...\n")
-
-        found = not_found = 0
-
-        for i, company in enumerate(companies):
-            name = company["name"]
-            website = company["website"]
-            cid = company["id"]
-            slugs = derive_slugs(name, website)
-
-            print(f"[{i+1}/{len(companies)}] {name}", end="")
-
-            matched_ats = None
-            matched_jobs = []
-            matched_url = None
-
-            for ats_name, try_fn in [
-                ("greenhouse", try_greenhouse),
-                ("lever", try_lever),
-                ("ashby", try_ashby),
-                ("workable", try_workable),
-                ("bamboohr", try_bamboohr),
-            ]:
-                for slug in slugs:
-                    result = try_fn(slug)
-                    if result is not None:
-                        jobs, url = result
-                        matched_ats = ats_name
-                        matched_jobs = jobs
-                        matched_url = url
-                        break
-                if matched_ats:
-                    break
-
-            if matched_ats:
-                clear_jobs(conn, cid)
-                insert_jobs(conn, cid, matched_ats, matched_jobs)
-                update_careers_status(conn, cid, matched_ats, matched_url)
-                conn.commit()
-
-                cats = {}
-                for j in matched_jobs:
-                    c = categorize(j["title"])
-                    cats[c] = cats.get(c, 0) + 1
-                summary = " | ".join(f"{k}:{v}" for k, v in sorted(cats.items()))
-                print(f" → {matched_ats} ({len(matched_jobs)} jobs) [{summary}]")
-                found += 1
-            else:
-                update_careers_status(conn, cid, "not_found", None)
-                conn.commit()
-                print(f" → not found")
-                not_found += 1
-
-        print(f"\nDone. Found: {found}, Not found: {not_found}")
-
     finally:
         conn.close()
+
+    if limit:
+        companies = companies[:limit]
+
+    mode = "hiring sweep" if hiring_sweep else "EDGAR-matched"
+    print(f"Scraping careers for {len(companies)} companies [{mode}] workers={workers}...\n")
+
+    total = len(companies)
+    found = not_found = 0
+
+    if workers <= 1:
+        for i, company in enumerate(companies):
+            result = _scrape_one(company, total, i + 1)
+            if result:
+                found += 1
+            else:
+                not_found += 1
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {
+                executor.submit(_scrape_one, company, total, i + 1): company
+                for i, company in enumerate(companies)
+            }
+            for future in as_completed(futures):
+                try:
+                    if future.result():
+                        found += 1
+                    else:
+                        not_found += 1
+                except Exception as e:
+                    company = futures[future]
+                    with _print_lock:
+                        print(f"  ERROR {company['name']}: {e}")
+                    not_found += 1
+
+    print(f"\nDone. Found: {found}, Not found: {not_found}")
 
 
 if __name__ == "__main__":
@@ -424,5 +525,6 @@ if __name__ == "__main__":
     parser.add_argument("--limit", type=int, help="Only process first N companies")
     parser.add_argument("--hiring-sweep", action="store_true", help="Scrape all accelerator companies regardless of EDGAR status")
     parser.add_argument("--rescrape-after-days", type=int, help="Re-scrape companies last scraped more than N days ago")
+    parser.add_argument("--workers", type=int, default=1, help="Number of parallel workers (default: 1)")
     args = parser.parse_args()
-    scrape(limit=args.limit, rescrape_after_days=args.rescrape_after_days, hiring_sweep=args.hiring_sweep)
+    scrape(limit=args.limit, rescrape_after_days=args.rescrape_after_days, hiring_sweep=args.hiring_sweep, workers=args.workers)
