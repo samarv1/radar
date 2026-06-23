@@ -29,7 +29,14 @@ from db.connection import get_connection
 from scrapers.techcrunch import normalize, find_match, load_accelerator_index
 
 RSS_URL = "https://a16zbuild.substack.com/feed"
-HEADERS = {"User-Agent": "startup-recruiting-tool contact@example.com"}
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/125.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/rss+xml, application/xml, text/xml, */*",
+}
 
 # Domains that are not company websites
 _SKIP_DOMAINS = re.compile(
@@ -112,8 +119,26 @@ def extract_companies(content_html: str) -> list[tuple[str, str]]:
 
 
 def fetch_rss(days_back: int) -> list[dict]:
-    resp = requests.get(RSS_URL, headers=HEADERS, timeout=30)
-    resp.raise_for_status()
+    last_err = None
+    for attempt in range(3):
+        if attempt:
+            time.sleep(2 ** attempt)
+        try:
+            resp = requests.get(RSS_URL, headers=HEADERS, timeout=30)
+            if resp.status_code == 403:
+                print(f"WARNING: a16z Build RSS returned 403 Forbidden — skipping (attempt {attempt + 1}/3)")
+                last_err = requests.HTTPError(f"403 Forbidden for {RSS_URL}", response=resp)
+                continue
+            resp.raise_for_status()
+            break
+        except requests.RequestException as e:
+            last_err = e
+            if attempt == 2:
+                print(f"WARNING: Could not fetch a16z Build RSS after 3 attempts: {e} — skipping")
+                return []
+    else:
+        print(f"WARNING: Could not fetch a16z Build RSS: {last_err} — skipping")
+        return []
 
     root = ET.fromstring(resp.text)
     cutoff = datetime.now(timezone.utc) - timedelta(days=days_back)
