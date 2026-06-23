@@ -9,6 +9,7 @@ on:
     - cron: "30 9 * * 1"   # Monday 9:30 — Lightspeed
     - cron: "0 10 * * 1"   # Monday 10am — Pear
     - cron: "30 10 * * 1"  # Monday 10:30 — Techstars
+    - cron: "0 12 * * 1"   # Monday 12pm — careers 30-day rescrape
   workflow_dispatch:
     inputs:
       mode:
@@ -16,7 +17,7 @@ on:
         required: false
         default: "daily"
         type: choice
-        options: [daily, weekly, yc, a16z, sequoia, lightspeed, pear, techstars]
+        options: [daily, weekly, yc, a16z, sequoia, lightspeed, pear, techstars, careers-rescrape]
 
 jobs:
   pipeline:
@@ -41,7 +42,8 @@ jobs:
             "0 9 * * 1")   echo "mode=sequoia"    >> $GITHUB_OUTPUT ;;
             "30 9 * * 1")  echo "mode=lightspeed" >> $GITHUB_OUTPUT ;;
             "0 10 * * 1")  echo "mode=pear"       >> $GITHUB_OUTPUT ;;
-            "30 10 * * 1") echo "mode=techstars"  >> $GITHUB_OUTPUT ;;
+            "30 10 * * 1") echo "mode=techstars"         >> $GITHUB_OUTPUT ;;
+            "0 12 * * 1")  echo "mode=careers-rescrape" >> $GITHUB_OUTPUT ;;
             *)             echo "mode=${{ github.event.inputs.mode || 'daily' }}" >> $GITHUB_OUTPUT ;;
           esac
 
