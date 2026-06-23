@@ -21,6 +21,8 @@ from scrapers.producthunt import scrape as scrape_ph
 from scrapers.sequoia import scrape as scrape_sequoia
 from scrapers.techcrunch import scrape as scrape_techcrunch
 from scrapers.techstars import scrape as scrape_techstars
+from scrapers.validate_standalone import run as run_validate_standalone
+from scrapers.enrich_edgar import run as run_enrich_edgar
 from scrapers.yc import scrape as scrape_yc
 
 
@@ -42,6 +44,12 @@ def run_daily():
 
     print("\n=== TechCrunch (last 90 days) ===")
     scrape_techcrunch(days_back=90)
+
+    print("\n=== Standalone validation ===")
+    run_validate_standalone()
+
+    print("\n=== EDGAR enrichment ===")
+    run_enrich_edgar()
 
 
 def run_weekly():

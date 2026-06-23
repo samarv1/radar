@@ -3,14 +3,14 @@
 import { Button } from "@/components/ui/button";
 
 export type Filters = {
-  sources: string[];
+  accelerators: string[];
   hiring: string[];
   daysMax: number | null;
   amountMax: number | null;
 };
 
 export const DEFAULT_FILTERS: Filters = {
-  sources: [],
+  accelerators: [],
   hiring: [],
   daysMax: null,
   amountMax: null,
@@ -80,10 +80,10 @@ export function FilterBar({ filters, onChange }: Props) {
   return (
     <div className="flex flex-wrap gap-8 mb-8">
       <div>
-        <p className="text-xs text-muted-foreground mb-2 font-medium">Source</p>
+        <p className="text-xs text-muted-foreground mb-2 font-medium">Accelerator / Firm</p>
         <Pills
-          values={filters.sources}
-          onChange={(v) => onChange({ ...filters, sources: v })}
+          values={filters.accelerators}
+          onChange={(v) => onChange({ ...filters, accelerators: v })}
           options={[
             ["yc", "YC"],
             ["a16z", "a16z"],
@@ -91,6 +91,7 @@ export function FilterBar({ filters, onChange }: Props) {
             ["pear", "Pear"],
             ["lightspeed", "Lightspeed"],
             ["techstars", "Techstars"],
+            ["unknown", "None / Unknown"],
           ]}
         />
       </div>

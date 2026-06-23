@@ -92,11 +92,9 @@ export function CompanyCard({
               )}
             </p>
             <div className="flex items-center gap-1.5 flex-wrap">
-              {company.accelerator && SOURCE_LABELS[company.accelerator] && (
-                <span className="text-xs font-medium text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
-                  {SOURCE_LABELS[company.accelerator]}
-                </span>
-              )}
+              <span className="text-xs font-medium text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
+                {SOURCE_LABELS[company.accelerator] ?? "None / Unknown"}
+              </span>
               {company.batch && (
                 <span className="text-xs text-muted-foreground">{company.batch}</span>
               )}
@@ -112,7 +110,7 @@ export function CompanyCard({
               <p className="text-lg font-bold leading-none">{amount}</p>
             )}
             <p className="text-xs text-muted-foreground mt-0.5">
-              {amount ? "raised " : ""}{formatDate(company.date_filed)}
+              {amount ? (company.has_edgar ? "raised " : "announced ") : ""}{formatDate(company.date_filed)}
             </p>
           </div>
         </div>
