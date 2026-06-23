@@ -1,11 +1,13 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import { Radar, Bookmark } from "lucide-react";
+import { Radar, Bookmark, ChevronLeft, ChevronRight } from "lucide-react";
 import { FilterBar, DEFAULT_FILTERS, type Filters } from "@/components/FilterBar";
 import { CompanyCard } from "@/components/CompanyCard";
 import { useBookmarks } from "@/lib/useBookmarks";
 import type { Company, LastUpdated } from "@/lib/db";
+
+const PAGE_SIZE = 24;
 
 const SIX_MONTHS_MS = 180 * 24 * 60 * 60 * 1000;
 
@@ -62,7 +64,13 @@ export function FeedClient({
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
   const [expandedOld, setExpandedOld] = useState(false);
   const [view, setView] = useState<"feed" | "bookmarks">("feed");
+  const [page, setPage] = useState(1);
   const { toggle, isBookmarked } = useBookmarks();
+
+  function handleFiltersChange(f: Filters) {
+    setFilters(f);
+    setPage(1);
+  }
 
   const visible = applyFilters(companies, filters);
   // eslint-disable-next-line react-hooks/purity
@@ -75,6 +83,9 @@ export function FeedClient({
   const oldCompanies = visible
     .filter((c) => now - new Date(c.date_filed).getTime() >= SIX_MONTHS_MS)
     .sort(byDateDesc);
+
+  const totalPages = Math.ceil(recent.length / PAGE_SIZE);
+  const pagedRecent = recent.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   const savedCompanies = companies
     .filter((c) => isBookmarked(c.id))
@@ -137,7 +148,7 @@ export function FeedClient({
         </div>
       ) : (
         <>
-          <FilterBar filters={filters} onChange={setFilters} />
+          <FilterBar filters={filters} onChange={handleFiltersChange} />
           <p className="text-sm text-muted-foreground mb-6">
             {visible.length} {visible.length === 1 ? "company" : "companies"}
           </p>
@@ -150,15 +161,38 @@ export function FeedClient({
 
           <div className="space-y-10">
             {recent.length > 0 && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {recent.map((c) => (
-                  <CompanyCard
-                    key={c.id}
-                    company={c}
-                    isBookmarked={isBookmarked(c.id)}
-                    onToggleBookmark={() => toggle(c.id)}
-                  />
-                ))}
+              <div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {pagedRecent.map((c) => (
+                    <CompanyCard
+                      key={c.id}
+                      company={c}
+                      isBookmarked={isBookmarked(c.id)}
+                      onToggleBookmark={() => toggle(c.id)}
+                    />
+                  ))}
+                </div>
+                {totalPages > 1 && (
+                  <div className="flex items-center justify-center gap-3 mt-8">
+                    <button
+                      onClick={() => { setPage((p) => Math.max(1, p - 1)); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                      disabled={page === 1}
+                      className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                    >
+                      <ChevronLeft size={18} />
+                    </button>
+                    <span className="text-sm text-muted-foreground tabular-nums">
+                      {page} / {totalPages}
+                    </span>
+                    <button
+                      onClick={() => { setPage((p) => Math.min(totalPages, p + 1)); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                      disabled={page === totalPages}
+                      className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                    >
+                      <ChevronRight size={18} />
+                    </button>
+                  </div>
+                )}
               </div>
             )}
 

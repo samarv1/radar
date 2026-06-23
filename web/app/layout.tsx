@@ -39,6 +39,17 @@ export default function RootLayout({
     >
       <body className="min-h-full flex flex-col">
         {children}
+        <footer className="mt-auto border-t border-border px-[12vw] py-5 text-xs text-muted-foreground flex justify-end">
+          <span>built by </span>
+          <a
+            href="https://www.linkedin.com/in/samarv/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline underline-offset-2 hover:text-foreground transition-colors"
+          >
+            Samar Varma
+          </a>
+        </footer>
         <Analytics />
       </body>
     </html>
