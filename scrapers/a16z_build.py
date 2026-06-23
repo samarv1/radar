@@ -147,13 +147,15 @@ def upsert(conn, row: dict) -> bool:
     sql = """
         INSERT INTO funding_news
             (company_name, amount_usd, round_type, article_title, article_url,
-             published_at, source, accelerator_id)
+             published_at, source, accelerator_id, website)
         VALUES
             (%(company_name)s, %(amount_usd)s, %(round_type)s, %(article_title)s,
-             %(article_url)s, %(published_at)s, 'a16z_build', %(accelerator_id)s)
+             %(article_url)s, %(published_at)s, 'a16z_build', %(accelerator_id)s,
+             %(website)s)
         ON CONFLICT (article_url) DO UPDATE SET
             accelerator_id = COALESCE(funding_news.accelerator_id, EXCLUDED.accelerator_id),
-            company_name = EXCLUDED.company_name
+            company_name = EXCLUDED.company_name,
+            website = COALESCE(funding_news.website, EXCLUDED.website)
         RETURNING (xmax = 0) AS inserted
     """
     with conn.cursor() as cur:
@@ -171,6 +173,7 @@ def scrape(days_back: int = 30):
     try:
         ids, names_norm = load_accelerator_index(conn)
         inserted = updated = matched = 0
+        matched_acc_ids: set[int] = set()
 
         for item in items:
             companies = extract_companies(item["content"])
@@ -183,6 +186,7 @@ def scrape(days_back: int = 30):
                 acc_id = find_match(company_name, ids, names_norm)
                 if acc_id:
                     matched += 1
+                    matched_acc_ids.add(acc_id)
 
                 row = {
                     "company_name": company_name,
@@ -192,6 +196,7 @@ def scrape(days_back: int = 30):
                     "article_url": article_url,
                     "published_at": item["pub_date"],
                     "accelerator_id": acc_id,
+                    "website": website_url,
                 }
 
                 is_new = upsert(conn, row)
@@ -201,6 +206,16 @@ def scrape(days_back: int = 30):
                     inserted += 1
                 else:
                     updated += 1
+
+        # Reset careers_scraped_at for matched companies so the next careers
+        # sweep re-scrapes them promptly (they're confirmed to be hiring now).
+        if matched_acc_ids:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE accelerator_companies SET careers_scraped_at = NULL WHERE id = ANY(%s)",
+                    (list(matched_acc_ids),),
+                )
+            print(f"\n  Reset careers_scraped_at for {len(matched_acc_ids)} matched companies")
 
         conn.commit()
     finally:

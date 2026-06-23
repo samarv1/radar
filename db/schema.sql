@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS funding_news (
     published_at TIMESTAMPTZ,
     source TEXT NOT NULL DEFAULT 'techcrunch',
     accelerator_id INT REFERENCES accelerator_companies(id),
+    website TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 

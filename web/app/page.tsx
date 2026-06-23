@@ -1,14 +1,18 @@
-import { getFeed, getLastUpdated } from "@/lib/db";
+import { getFeed, getHiringFeed, getLastUpdated } from "@/lib/db";
 import { FeedClient } from "@/components/FeedClient";
 
 export const dynamic = "force-dynamic";
 
 export default async function Home() {
-  const [companies, lastUpdated] = await Promise.all([getFeed(), getLastUpdated()]);
+  const [companies, hiringCompanies, lastUpdated] = await Promise.all([
+    getFeed(),
+    getHiringFeed(),
+    getLastUpdated(),
+  ]);
 
   return (
     <main className="w-full px-[12vw] py-8">
-      <FeedClient companies={companies} lastUpdated={lastUpdated} />
+      <FeedClient companies={companies} hiringCompanies={hiringCompanies} lastUpdated={lastUpdated} />
     </main>
   );
 }
