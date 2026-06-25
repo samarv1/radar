@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useEffect, useRef } from "react";
 import { Radar, Bookmark, ChevronLeft, ChevronRight } from "lucide-react";
-import { FilterBar, HiringFilterBar, DEFAULT_FILTERS, VERTICAL_KEYWORDS, tagMatchesKeyword, getRoundFromAmount, type Filters } from "@/components/FilterBar";
+import { FilterBar, HiringFilterBar, DEFAULT_FILTERS, VERTICAL_KEYWORDS, tagMatchesKeyword, normalizeRoundType, type Filters } from "@/components/FilterBar";
 import { CompanyCard } from "@/components/CompanyCard";
 import { useBookmarks } from "@/lib/useBookmarks";
 import type { Company } from "@/lib/db";
@@ -55,7 +55,7 @@ function applyFilters(companies: Company[], f: Filters): Company[] {
 
     if (f.verticals.length > 0 && !matchesVertical(c.tags, f.verticals)) return false;
 
-    if (f.rounds.length > 0 && !f.rounds.includes(getRoundFromAmount(c.amount_raised))) return false;
+    if (f.rounds.length > 0 && !f.rounds.includes(normalizeRoundType(c.round_type))) return false;
 
     return true;
   });

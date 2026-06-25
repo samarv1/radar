@@ -22,16 +22,18 @@ export const DEFAULT_FILTERS: Filters = {
   rounds: [],
 };
 
-export function getRoundFromAmount(n: number | null): string {
-  if (n === null) return "unknown";
-  if (n < 3_000_000) return "seed";
-  if (n < 15_000_000) return "series_a";
-  if (n < 40_000_000) return "series_b";
-  return "series_c";
+export function normalizeRoundType(rt: string | null): string {
+  if (!rt) return "unknown";
+  const s = rt.toLowerCase().trim();
+  if (s.includes("pre") || s === "seed") return "seed";
+  if (s.includes("series a")) return "series_a";
+  if (s.includes("series b")) return "series_b";
+  if (s.includes("series c") || s.includes("series d") || s.includes("series e")) return "series_c";
+  return "unknown";
 }
 
 const ROUND_OPTIONS: [string, string][] = [
-  ["seed", "Seed"],
+  ["seed", "Seed / Pre-Seed"],
   ["series_a", "Series A"],
   ["series_b", "Series B"],
   ["series_c", "Series C+"],

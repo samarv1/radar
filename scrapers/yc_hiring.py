@@ -85,15 +85,25 @@ def scrape():
                 if row:
                     matched_ids.add(row[0])
 
+        reset_count = 0
         if matched_ids:
             with conn.cursor() as cur:
+                # Only reset companies not scraped in last 7 days — avoids re-scraping
+                # the entire hiring cohort every day.
                 cur.execute(
-                    "UPDATE accelerator_companies SET careers_scraped_at = NULL WHERE id = ANY(%s)",
+                    """
+                    UPDATE accelerator_companies
+                    SET careers_scraped_at = NULL
+                    WHERE id = ANY(%s)
+                      AND (careers_scraped_at IS NULL
+                           OR careers_scraped_at < NOW() - INTERVAL '7 days')
+                    """,
                     (list(matched_ids),),
                 )
+                reset_count = cur.rowcount
             conn.commit()
 
-        print(f"Matched {len(matched_ids)} companies in DB → reset careers_scraped_at")
+        print(f"Matched {len(matched_ids)} companies in DB → reset {reset_count} careers_scraped_at (stale >7d)")
         print("Done.")
     finally:
         conn.close()

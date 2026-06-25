@@ -39,7 +39,7 @@ def run_daily():
     run_cross_reference()
 
     print("\n=== Careers (EDGAR-matched) ===")
-    scrape_careers()
+    scrape_careers(workers=4)
 
     print("\n=== a16z Build newsletter ===")
     scrape_a16z_build(days_back=2)
@@ -50,13 +50,14 @@ def run_daily():
     print("\n=== Careers (new accelerator companies) ===")
     # Only touches companies with NULL careers_scraped_at — fast daily pass.
     # a16z_build and yc_hiring reset careers_scraped_at for signalled companies.
-    scrape_careers(hiring_sweep=True, workers=8)
+    # Cap at 500/day so the step stays bounded; backlog drains over a few runs.
+    scrape_careers(hiring_sweep=True, workers=8, limit=500)
 
     print("\n=== Product Hunt (last 2 days) ===")
     scrape_ph(days_back=2)
 
-    print("\n=== TechCrunch (last 90 days) ===")
-    scrape_techcrunch(days_back=90)
+    print("\n=== TechCrunch (last 2 days) ===")
+    scrape_techcrunch(days_back=2)
 
     print("\n=== Standalone validation ===")
     run_validate_standalone()
@@ -90,6 +91,9 @@ def run_weekly():
 
     print("\n=== Product Hunt full backfill (90 days) ===")
     scrape_ph(days_back=90)
+
+    print("\n=== TechCrunch full backfill (90 days) ===")
+    scrape_techcrunch(days_back=90)
 
 
 SCRAPERS = {

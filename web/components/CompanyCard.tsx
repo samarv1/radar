@@ -2,7 +2,7 @@
 
 import { Flame, Bookmark } from "lucide-react";
 import { Card, CardHeader } from "@/components/ui/card";
-import { getRoundFromAmount, VERTICAL_KEYWORDS, tagMatchesKeyword } from "@/components/FilterBar";
+import { VERTICAL_KEYWORDS, tagMatchesKeyword } from "@/components/FilterBar";
 import type { Company } from "@/lib/db";
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
@@ -33,13 +33,6 @@ function getVerticals(tags: string[] | null): string[] {
 function isRecent(date_filed: string): boolean {
   return Date.now() - new Date(date_filed).getTime() < THIRTY_DAYS_MS;
 }
-
-const ROUND_LABELS: Record<string, string> = {
-  seed: "Seed",
-  series_a: "Series A",
-  series_b: "Series B",
-  series_c: "Series C+",
-};
 
 const SOURCE_LABELS: Record<string, string> = {
   yc: "YC",
@@ -111,7 +104,7 @@ export function CompanyCard({
   const amount = formatAmount(company.amount_raised);
   const fresh = isRecent(company.date_filed);
   const verticals = getVerticals(company.tags);
-  const roundLabel = ROUND_LABELS[getRoundFromAmount(company.amount_raised)] ?? null;
+  const roundLabel = company.round_type ?? null;
   const hasAccel = SOURCE_LABELS[company.accelerator] !== undefined;
   const showAccelRow = hasAccel || (!hideBatch && !!company.batch);
   // Each variable row contributes (2px space-y margin + height)px to the left column.

@@ -149,16 +149,21 @@ def parse_amount(title: str) -> float | None:
     return value
 
 
-def parse_round(title: str) -> str | None:
-    m = ROUND_RE.search(title)
-    if not m:
-        return None
-    r = m.group(1).lower()
-    if "pre" in r:
-        return "Pre-Seed"
-    if r == "seed":
-        return "Seed"
-    return f"Series {r[-1].upper()}"
+def strip_tags(html_str: str) -> str:
+    return re.sub(r"<[^>]+>", " ", html_str)
+
+
+def parse_round(title: str, body_text: str | None = None) -> str | None:
+    for text in (title, body_text or ""):
+        m = ROUND_RE.search(text)
+        if m:
+            r = m.group(1).lower()
+            if "pre" in r:
+                return "Pre-Seed"
+            if r == "seed":
+                return "Seed"
+            return f"Series {r[-1].upper()}"
+    return None
 
 
 def parse_company_from_slug(url: str) -> str | None:
@@ -320,7 +325,8 @@ def scrape(days_back: int = 90):
                 continue
 
             amount = parse_amount(title)
-            round_type = parse_round(title)
+            body_text = strip_tags(content_html[:600]) if content_html else ""
+            round_type = parse_round(title, body_text)
             acc_id = find_match(company, ids, names_norm)
             if acc_id:
                 matched += 1
@@ -352,9 +358,87 @@ def scrape(days_back: int = 90):
     print(f"\nDone. Inserted: {inserted}, Updated: {updated}, Skipped (no parse): {skipped}, Matched to accelerator: {matched}")
 
 
+def _slug_from_url(url: str) -> str | None:
+    """Extract the TC post slug from a URL like .../2026/04/02/some-slug/"""
+    m = re.search(r"/(\d{4}/\d{2}/\d{2}/)?([^/?#]+?)/?$", url)
+    return m.group(2) if m else None
+
+
+def backfill_round_types():
+    """Re-fetch TechCrunch articles that have no round_type and try to extract it from body."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, article_url, article_title FROM funding_news
+                WHERE round_type IS NULL AND source = 'techcrunch'
+                ORDER BY published_at DESC
+            """)
+            rows = cur.fetchall()
+
+        print(f"Backfilling round_type for {len(rows)} TC articles...")
+        updated = 0
+
+        for fn_id, url, title in rows:
+            slug = _slug_from_url(url)
+            if not slug:
+                continue
+            try:
+                resp = requests.get(
+                    WP_API,
+                    params={"slug": slug, "_fields": "content"},
+                    headers=HEADERS,
+                    timeout=20,
+                )
+                time.sleep(SLEEP)
+                if resp.status_code != 200:
+                    continue
+                data = resp.json()
+                if not data:
+                    continue
+                post = data[0] if isinstance(data, list) else data
+                content_html = post.get("content", {}).get("rendered", "")
+                # Scan first ~1500 chars — round type is usually in the lede but sometimes paragraph 2-3
+                body_text = strip_tags(content_html[:1500])
+                # Only accept body-sourced round when it appears near a dollar amount.
+                # Title-sourced round is always trusted (already checked upstream).
+                round_type = parse_round(html.unescape(title))
+                if not round_type:
+                    rm = ROUND_RE.search(body_text)
+                    am = AMOUNT_RE.search(body_text)
+                    if rm and am and abs(rm.start() - am.start()) <= 150:
+                        r = rm.group(1).lower()
+                        if "pre" in r:
+                            round_type = "Pre-Seed"
+                        elif r == "seed":
+                            round_type = "Seed"
+                        else:
+                            round_type = f"Series {r[-1].upper()}"
+                if round_type:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            "UPDATE funding_news SET round_type = %s WHERE id = %s",
+                            (round_type, fn_id),
+                        )
+                    conn.commit()
+                    print(f"  {round_type:<12}  {title[:60]}")
+                    updated += 1
+            except Exception as e:
+                print(f"  ERROR {url}: {e}")
+
+    finally:
+        conn.close()
+
+    print(f"\nBackfill done. Updated {updated} rows.")
+
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--days", type=int, default=90)
+    parser.add_argument("--backfill", action="store_true", help="Backfill round_type from article bodies")
     args = parser.parse_args()
-    scrape(days_back=args.days)
+    if args.backfill:
+        backfill_round_types()
+    else:
+        scrape(days_back=args.days)
