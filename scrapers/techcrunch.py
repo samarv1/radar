@@ -325,7 +325,7 @@ def scrape(days_back: int = 90):
                 continue
 
             amount = parse_amount(title)
-            body_text = strip_tags(content_html[:600]) if content_html else ""
+            body_text = strip_tags(content_html[:1500]) if content_html else ""
             round_type = parse_round(title, body_text)
             acc_id = find_match(company, ids, names_norm)
             if acc_id:
