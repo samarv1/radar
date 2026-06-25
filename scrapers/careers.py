@@ -83,50 +83,77 @@ def categorize(title: str) -> str:
     return "other"
 
 
-# --- Slug derivation ---
+# --- ATS discovery (website-first) ---
 
-def derive_slugs(name: str, website: str | None) -> list[str]:
-    slugs = []
+# Patterns to detect ATS systems in redirect URLs and page HTML
+_ATS_PATTERNS = [
+    ("greenhouse", re.compile(r"boards\.greenhouse\.io/([^/?\s\"']+)", re.I)),
+    ("lever",      re.compile(r"jobs\.lever\.co/([^/?\s\"']+)", re.I)),
+    ("ashby",      re.compile(r"jobs\.ashbyhq\.com/([^/?\s\"']+)", re.I)),
+    ("workable",   re.compile(r"apply\.workable\.com/([^/?\s\"']+)", re.I)),
+    ("bamboohr",   re.compile(r"([\w-]+)\.bamboohr\.com", re.I)),
+]
 
-    if website:
+_CAREERS_PATHS = [
+    "/careers", "/jobs", "/join", "/about/careers",
+    "/work-with-us", "/open-roles", "/about/jobs", "/company/careers",
+]
+
+
+def _board_url(ats: str, slug: str) -> str:
+    if ats == "greenhouse":
+        return f"https://boards.greenhouse.io/{slug}"
+    if ats == "lever":
+        return f"https://jobs.lever.co/{slug}"
+    if ats == "ashby":
+        return f"https://jobs.ashbyhq.com/{slug}"
+    if ats == "workable":
+        return f"https://apply.workable.com/{slug}"
+    if ats == "bamboohr":
+        return f"https://{slug}.bamboohr.com/careers"
+    return ""
+
+
+def discover_ats(website: str) -> tuple[str, str, str] | None:
+    """Return (ats_name, slug, board_url) by following links from company's own website.
+
+    Tries common careers paths, follows redirects, then scans the final URL and
+    page HTML for known ATS domain patterns. No slug guessing — the slug comes
+    directly from the company's own redirect chain or embedded link.
+    """
+    base = website.rstrip("/")
+    if not base.startswith("http"):
+        base = "https://" + base
+
+    for path in _CAREERS_PATHS:
         try:
-            host = urlparse(website if "://" in website else f"https://{website}").netloc
-            host = host.lower().lstrip("www.")
-            stem = host.split(".")[0]
-            if stem:
-                slugs.append(stem)
-            # for two-part domains like socket.security → socket-security
-            parts = host.rsplit(".", 1)[0]
-            if "-" not in parts and "." in parts:
-                slugs.append(parts.replace(".", "-"))
+            r = requests.get(base + path, headers=HEADERS, timeout=10, allow_redirects=True)
+            time.sleep(SLEEP)
+            # Check final URL after redirects
+            for ats, pattern in _ATS_PATTERNS:
+                m = pattern.search(r.url)
+                if m:
+                    slug = m.group(1).strip("/")
+                    return ats, slug, _board_url(ats, slug)
+            # Scan page body for embedded ATS links
+            if r.status_code == 200 and len(r.content) < 2_000_000:
+                for ats, pattern in _ATS_PATTERNS:
+                    m = pattern.search(r.text)
+                    if m:
+                        slug = m.group(1).strip("/")
+                        return ats, slug, _board_url(ats, slug)
         except Exception:
             pass
-
-    # normalized company name → slug
-    norm = re.sub(r"[^\w\s-]", "", name.lower())
-    norm = re.sub(r"\s+", "-", norm.strip())
-    # strip legal suffixes
-    norm = re.sub(
-        r"-(inc|llc|corp|ltd|co|incorporated|limited|company|technologies|software|labs|group|holdings)$",
-        "", norm,
-    )
-    if norm and norm not in slugs:
-        slugs.append(norm)
-
-    # no-hyphen variant
-    nohyphen = norm.replace("-", "")
-    if nohyphen and nohyphen not in slugs:
-        slugs.append(nohyphen)
-
-    return [s for s in slugs if s]
+    return None
 
 
 # --- ATS fetchers ---
 
 def try_greenhouse(slug: str) -> tuple[list[dict], str] | None:
-    url = f"https://boards.greenhouse.io/{slug}/jobs"
+    api_url = f"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true"
+    board_url = f"https://boards.greenhouse.io/{slug}"
     try:
-        r = requests.get(url, headers=HEADERS, timeout=10)
+        r = requests.get(api_url, headers=HEADERS, timeout=10)
         time.sleep(SLEEP)
         if r.status_code != 200:
             return None
@@ -144,7 +171,7 @@ def try_greenhouse(slug: str) -> tuple[list[dict], str] | None:
                 "job_url": j.get("absolute_url", ""),
                 "posted_at": j.get("updated_at"),
             })
-        return results, url
+        return results, board_url
     except Exception:
         return None
 
@@ -415,34 +442,39 @@ def update_careers_status(conn, company_id: int, ats: str, url: str | None):
 
 # --- Main ---
 
+_ATS_FETCHERS = {
+    "greenhouse": try_greenhouse,
+    "lever": try_lever,
+    "ashby": try_ashby,
+    "workable": try_workable,
+    "bamboohr": try_bamboohr,
+}
+
+
 def _scrape_one(company: dict, total: int, idx: int) -> bool:
     """Scrape a single company using its own DB connection. Returns True if found."""
     name = company["name"]
     website = company["website"]
     cid = company["id"]
-    slugs = derive_slugs(name, website)
 
     matched_ats = None
     matched_jobs = []
     matched_url = None
 
-    for ats_name, try_fn in [
-        ("greenhouse", try_greenhouse),
-        ("lever", try_lever),
-        ("ashby", try_ashby),
-        ("workable", try_workable),
-        ("bamboohr", try_bamboohr),
-    ]:
-        for slug in slugs:
-            result = try_fn(slug)
-            if result is not None:
-                jobs, url = result
-                matched_ats = ats_name
-                matched_jobs = jobs
-                matched_url = url
-                break
-        if matched_ats:
-            break
+    if website:
+        discovery = discover_ats(website)
+        if discovery:
+            ats_name, slug, board_url = discovery
+            fetcher = _ATS_FETCHERS.get(ats_name)
+            if fetcher:
+                result = fetcher(slug)
+                if result is not None:
+                    matched_jobs, matched_url = result
+                    matched_ats = ats_name
+                else:
+                    # ATS detected but API returned nothing (board exists, zero jobs)
+                    matched_ats = ats_name
+                    matched_url = board_url
 
     conn = get_connection()
     try:
@@ -519,6 +551,24 @@ def scrape(
     print(f"\nDone. Found: {found}, Not found: {not_found}")
 
 
+def reset_careers_data():
+    """Wipe all ATS/careers data so companies get re-scraped with website-first discovery."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM job_listings")
+            deleted_jobs = cur.rowcount
+            cur.execute("""
+                UPDATE accelerator_companies
+                SET careers_ats = NULL, careers_url = NULL, careers_scraped_at = NULL
+            """)
+            reset_companies = cur.rowcount
+        conn.commit()
+        print(f"Wiped {deleted_jobs} job listings and reset {reset_companies} companies.")
+    finally:
+        conn.close()
+
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
@@ -526,5 +576,9 @@ if __name__ == "__main__":
     parser.add_argument("--hiring-sweep", action="store_true", help="Scrape all accelerator companies regardless of EDGAR status")
     parser.add_argument("--rescrape-after-days", type=int, help="Re-scrape companies last scraped more than N days ago")
     parser.add_argument("--workers", type=int, default=1, help="Number of parallel workers (default: 1)")
+    parser.add_argument("--reset-all", action="store_true", help="Wipe all ATS/careers data before re-scraping")
     args = parser.parse_args()
-    scrape(limit=args.limit, rescrape_after_days=args.rescrape_after_days, hiring_sweep=args.hiring_sweep, workers=args.workers)
+    if args.reset_all:
+        reset_careers_data()
+    else:
+        scrape(limit=args.limit, rescrape_after_days=args.rescrape_after_days, hiring_sweep=args.hiring_sweep, workers=args.workers)

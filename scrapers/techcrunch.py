@@ -79,6 +79,9 @@ class _FirstExternalLink(HTMLParser):
         super().__init__()
         self.result: str | None = None
         self.website: str | None = None
+        # Fallback: first external link whose URL is a bare homepage (path is / or empty),
+        # used when no company-name link is found (e.g. TC links descriptive text to homepage).
+        self.homepage_fallback: str | None = None
         self._href: str | None = None
         self._text: list[str] = []
 
@@ -92,6 +95,12 @@ class _FirstExternalLink(HTMLParser):
             ):
                 self._href = href
                 self._text = []
+                # Track bare homepage URLs as a fallback
+                if self.homepage_fallback is None:
+                    from urllib.parse import urlparse
+                    path = urlparse(href).path
+                    if not path or path == "/":
+                        self.homepage_fallback = href
 
     def handle_data(self, data: str) -> None:
         if self._href is not None:
@@ -125,7 +134,7 @@ def parse_website_from_content(content_html: str) -> str | None:
     """Extract company website URL from first external hyperlink in article body."""
     parser = _FirstExternalLink()
     parser.feed(html.unescape(content_html[:3000]))
-    return parser.website
+    return parser.website or parser.homepage_fallback
 
 
 def normalize(name: str) -> str:
@@ -356,6 +365,100 @@ def scrape(days_back: int = 90):
         conn.close()
 
     print(f"\nDone. Inserted: {inserted}, Updated: {updated}, Skipped (no parse): {skipped}, Matched to accelerator: {matched}")
+    backfill_tc_websites()
+
+
+def backfill_tc_websites():
+    """Propagate TC-sourced website URLs to accelerator_companies.website.
+
+    For each accelerator company matched to a funding_news row, takes the most
+    recent TC article's website and overwrites accelerator_companies.website.
+    Logs every update for auditability.
+    """
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE accelerator_companies a
+                SET website = fn.website,
+                    updated_at = NOW()
+                FROM (
+                    SELECT DISTINCT ON (accelerator_id)
+                        accelerator_id, website, company_name
+                    FROM funding_news
+                    WHERE accelerator_id IS NOT NULL
+                      AND website IS NOT NULL
+                    ORDER BY accelerator_id, published_at DESC
+                ) fn
+                WHERE a.id = fn.accelerator_id
+                  AND a.website IS DISTINCT FROM fn.website
+                RETURNING a.name, fn.website, fn.company_name
+            """)
+            rows = cur.fetchall()
+        conn.commit()
+        if rows:
+            print(f"\nPropagated {len(rows)} TC website(s) to accelerator_companies:")
+            for acc_name, new_url, tc_name in rows:
+                print(f"  {acc_name} (TC: {tc_name}) → {new_url}")
+    finally:
+        conn.close()
+
+
+def backfill_missing_websites():
+    """Re-fetch TC articles that have no website and try to extract one.
+
+    Useful after parser improvements to pick up previously missed homepage links.
+    """
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, article_url FROM funding_news
+                WHERE source = 'techcrunch' AND website IS NULL
+                ORDER BY published_at DESC
+            """)
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+
+    print(f"Re-fetching {len(rows)} TC articles with missing website...")
+    updated = 0
+
+    for fn_id, url in rows:
+        slug = _slug_from_url(url)
+        if not slug:
+            continue
+        try:
+            resp = requests.get(
+                WP_API,
+                params={"slug": slug, "_fields": "content"},
+                headers=HEADERS,
+                timeout=20,
+            )
+            time.sleep(SLEEP)
+            if resp.status_code != 200:
+                continue
+            data = resp.json()
+            if not data:
+                continue
+            content_html = (data[0] if isinstance(data, list) else data).get("content", {}).get("rendered", "")
+            website = parse_website_from_content(content_html)
+            if website:
+                conn = get_connection()
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute("UPDATE funding_news SET website = %s WHERE id = %s", (website, fn_id))
+                    conn.commit()
+                finally:
+                    conn.close()
+                print(f"  {fn_id}: {website}")
+                updated += 1
+        except Exception as e:
+            print(f"  ERROR {url}: {e}")
+
+    print(f"Done. Updated {updated} rows.")
+    if updated:
+        backfill_tc_websites()
 
 
 def _slug_from_url(url: str) -> str | None:
@@ -437,8 +540,16 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--days", type=int, default=90)
     parser.add_argument("--backfill", action="store_true", help="Backfill round_type from article bodies")
+    parser.add_argument("--backfill-websites", action="store_true",
+                        help="Update accelerator_companies.website from TC-sourced URLs")
+    parser.add_argument("--backfill-missing", action="store_true",
+                        help="Re-fetch TC articles with no website and extract URLs")
     args = parser.parse_args()
     if args.backfill:
         backfill_round_types()
+    elif args.backfill_websites:
+        backfill_tc_websites()
+    elif args.backfill_missing:
+        backfill_missing_websites()
     else:
         scrape(days_back=args.days)
