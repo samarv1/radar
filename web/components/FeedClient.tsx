@@ -369,6 +369,7 @@ const visible = applyFilters(companies, filters);
                         isBookmarked={isBookmarked(c.id)}
                         onToggleBookmark={() => toggle(c.id)}
                         hideBatch
+                        hiringMode
                       />
                     ))}
                   </div>

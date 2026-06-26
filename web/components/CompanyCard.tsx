@@ -56,8 +56,10 @@ function formatDate(s: string | null): string {
   return new Date(s).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 }
 
-function OpenRoles({ company }: { company: Company }) {
-  if (company.amount_raised === null && company.careers_url) {
+function OpenRoles({ company, hiringMode }: { company: Company; hiringMode: boolean }) {
+  // In hiring mode, always show ATS-based status (role counts + apply link).
+  // Outside hiring mode, companies with no funding data use a simplified "apply ↗" link.
+  if (!hiringMode && company.amount_raised === null && company.careers_url) {
     return (
       <div className="flex items-baseline gap-1.5 text-xs text-muted-foreground pt-1">
         <a href={company.careers_url} target="_blank" rel="noopener noreferrer" className="relative z-10 hover:opacity-70 transition-opacity font-medium text-green-600">
@@ -97,16 +99,18 @@ export function CompanyCard({
   isBookmarked,
   onToggleBookmark,
   hideBatch = false,
+  hiringMode = false,
 }: {
   company: Company;
   isBookmarked: boolean;
   onToggleBookmark: () => void;
   hideBatch?: boolean;
+  hiringMode?: boolean;
 }) {
-  const amount = formatAmount(company.amount_raised);
+  const amount = hiringMode ? null : formatAmount(company.amount_raised);
   const fresh = isRecent(company.date_filed);
   const verticals = getVerticals(company.tags);
-  const roundLabel = company.round_type ?? null;
+  const roundLabel = hiringMode ? null : (company.round_type ?? null);
   const accelBadges = (company.accelerators ?? [company.accelerator]).filter(a => SOURCE_LABELS[a]);
   const showAccelRow = accelBadges.length > 0 || (!hideBatch && !!company.batch);
   // Each variable row contributes (2px space-y margin + height)px to the left column.
@@ -152,7 +156,7 @@ export function CompanyCard({
                 ))}
               </div>
             )}
-            <OpenRoles company={company} />
+            <OpenRoles company={company} hiringMode={hiringMode} />
             {spacerH > 0 && <div style={{ height: spacerH }} />}
           </div>
 
@@ -164,13 +168,15 @@ export function CompanyCard({
             <p className="text-xs text-muted-foreground mt-0.5 flex items-center justify-end gap-1">
               {fresh && (company.has_edgar || company.date_source === "announced" || company.date_source === "posted") && <Flame className="relative z-10 shrink-0 text-orange-400" size={13} />}
               <span>
-                {company.has_edgar
-                  ? "raised "
-                  : (company.date_source === "announced" || (amount !== null && !company.has_edgar))
-                    ? "announced "
-                    : company.date_source === "posted"
-                      ? "posted "
-                      : "discovered "}
+                {hiringMode
+                  ? (company.date_source === "posted" ? "posted " : "discovered ")
+                  : company.has_edgar
+                    ? "raised "
+                    : company.date_source === "announced" || (amount !== null && !company.has_edgar)
+                      ? "announced "
+                      : company.date_source === "posted"
+                        ? "posted "
+                        : "discovered "}
                 {formatDate(company.date_filed)}
               </span>
             </p>
