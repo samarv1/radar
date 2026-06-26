@@ -389,7 +389,7 @@ def scrape_chunked(days_back: int = 180, chunk_days: int = 30, limit_per_chunk: 
 
                 if upsert_filing(conn, filing_row):
                     inserted += 1
-                    print(f"  [{i+1}] {company_name} — inserted ✓")
+                    print(f"  [{i+1}] {entity_name} — inserted ✓")
                 else:
                     dupes += 1
 
