@@ -225,18 +225,49 @@ def is_excluded_by_xml(parsed: dict) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# 4. DB upsert
+# 4. Shared filing row builder + DB upsert
 # ---------------------------------------------------------------------------
+
+def _build_filing_row(
+    parsed: dict,
+    entity_name: str,
+    accession_no: str,
+    file_date: str,
+    raw_url: str | None,
+    *,
+    inc_state: str | None = None,
+    accelerator_id: int | None = None,
+) -> dict:
+    date_of_first_sale = None
+    raw_dos = parsed.get("date_of_first_sale")
+    if raw_dos:
+        try:
+            date_of_first_sale = datetime.strptime(raw_dos[:10], "%Y-%m-%d").date()
+        except ValueError:
+            pass
+    return {
+        "company_name": parsed["company_name"] or entity_name,
+        "state": parsed.get("state") or inc_state,
+        "date_filed": file_date or None,
+        "date_of_first_sale": date_of_first_sale,
+        "amount_raised": parsed.get("amount_raised"),
+        "industry_group": parsed.get("industry_group"),
+        "entity_type": parsed.get("entity_type"),
+        "accession_number": accession_no,
+        "raw_url": raw_url,
+        "accelerator_id": accelerator_id,
+    }
+
 
 def upsert_filing(conn, filing: dict) -> bool:
     sql = """
         INSERT INTO edgar_filings
             (company_name, state, date_filed, date_of_first_sale, amount_raised,
-             industry_group, entity_type, accession_number, raw_url)
+             industry_group, entity_type, accession_number, raw_url, accelerator_id)
         VALUES
             (%(company_name)s, %(state)s, %(date_filed)s, %(date_of_first_sale)s,
              %(amount_raised)s, %(industry_group)s, %(entity_type)s,
-             %(accession_number)s, %(raw_url)s)
+             %(accession_number)s, %(raw_url)s, %(accelerator_id)s)
         ON CONFLICT (accession_number) DO NOTHING
         RETURNING id
     """
@@ -293,27 +324,7 @@ def scrape(days_back: int = 180, limit: int = 2000, start_offset: int = 0):
                 skipped_excluded += 1
                 continue
 
-            company_name = parsed["company_name"] or entity_name
-
-            date_of_first_sale = None
-            raw_dos = parsed.get("date_of_first_sale")
-            if raw_dos:
-                try:
-                    date_of_first_sale = datetime.strptime(raw_dos[:10], "%Y-%m-%d").date()
-                except ValueError:
-                    pass
-
-            filing_row = {
-                "company_name": company_name,
-                "state": parsed.get("state") or inc_state,
-                "date_filed": file_date or None,
-                "date_of_first_sale": date_of_first_sale,
-                "amount_raised": parsed.get("amount_raised"),
-                "industry_group": parsed.get("industry_group"),
-                "entity_type": parsed.get("entity_type"),
-                "accession_number": accession_no,
-                "raw_url": raw_url,
-            }
+            filing_row = _build_filing_row(parsed, entity_name, accession_no, file_date, raw_url, inc_state=inc_state)
 
             if upsert_filing(conn, filing_row):
                 inserted += 1
@@ -330,6 +341,73 @@ def scrape(days_back: int = 180, limit: int = 2000, start_offset: int = 0):
     print(f"\nDone. inserted={inserted}, duplicates={skipped_duplicate}, excluded={skipped_excluded}, failed={failed}")
 
 
+def scrape_chunked(days_back: int = 180, chunk_days: int = 30, limit_per_chunk: int = 2000):
+    """
+    Broad scan split into sub-windows to stay under EDGAR's hard 10k pagination cap.
+    Each window covers `chunk_days` days; windows walk backwards from today.
+    ON CONFLICT DO NOTHING makes overlapping edges idempotent.
+    """
+    apply_schema()
+    end = date.today()
+    start_outer = end - timedelta(days=days_back)
+
+    total_inserted = total_dupes = total_excluded = total_failed = 0
+    window_end = end
+
+    while window_end > start_outer:
+        window_start = max(window_end - timedelta(days=chunk_days), start_outer)
+        print(f"\n--- Window {window_start} → {window_end} ---")
+
+        stubs = search_form_d_stubs(str(window_start), str(window_end), max_stubs=limit_per_chunk)
+        print(f"Collected {len(stubs)} non-fund stubs. Fetching XMLs...")
+
+        conn = get_connection()
+        inserted = dupes = excluded = failed = 0
+        try:
+            for i, stub in enumerate(stubs):
+                accession_no = stub["accession_no"]
+                entity_name = stub.get("entity_name", "")
+                file_date = stub.get("file_date", "")
+                cik = stub.get("cik", "")
+                inc_state = stub.get("inc_state")
+
+                if not accession_no or not cik:
+                    failed += 1
+                    continue
+
+                xml_text, raw_url = fetch_primary_xml(cik, accession_no)
+                if not xml_text:
+                    failed += 1
+                    continue
+
+                parsed = parse_form_d_xml(xml_text)
+                if is_excluded_by_xml(parsed):
+                    excluded += 1
+                    continue
+
+                filing_row = _build_filing_row(parsed, entity_name, accession_no, file_date, raw_url, inc_state=inc_state)
+
+                if upsert_filing(conn, filing_row):
+                    inserted += 1
+                    print(f"  [{i+1}] {company_name} — inserted ✓")
+                else:
+                    dupes += 1
+
+                conn.commit()
+        finally:
+            conn.close()
+
+        print(f"Window done. inserted={inserted}, dupes={dupes}, excluded={excluded}, failed={failed}")
+        total_inserted += inserted
+        total_dupes += dupes
+        total_excluded += excluded
+        total_failed += failed
+
+        window_end = window_start
+
+    print(f"\nChunked scan complete. inserted={total_inserted}, dupes={total_dupes}, excluded={total_excluded}, failed={total_failed}")
+
+
 def scrape_targeted(days_back: int = 180):
     """
     Targeted mode: for each accelerator_company with a known CIK, fetch
@@ -337,12 +415,10 @@ def scrape_targeted(days_back: int = 180):
     from the last `days_back` days. Much faster than the broad scan and
     surgically accurate — no fuzzy matching needed.
     """
-    from db.connection import get_connection as _gc
-
     cutoff = date.today() - timedelta(days=days_back)
     SUBMISSIONS = "https://data.sec.gov/submissions/CIK{cik}.json"
 
-    conn = _gc()
+    conn = get_connection()
     try:
         with conn.cursor() as cur:
             cur.execute(
@@ -399,30 +475,10 @@ def scrape_targeted(days_back: int = 180):
                 parsed = parse_form_d_xml(xml_text)
                 if is_excluded_by_xml(parsed):
                     continue
-                company_name = parsed["company_name"] or name
 
-                date_of_first_sale = None
-                raw_dos = parsed.get("date_of_first_sale")
-                if raw_dos:
-                    try:
-                        date_of_first_sale = datetime.strptime(raw_dos[:10], "%Y-%m-%d").date()
-                    except ValueError:
-                        pass
+                filing_row = _build_filing_row(parsed, name, accession_no, filed_str, raw_url, accelerator_id=acc_id)
 
-                filing_row = {
-                    "company_name": company_name,
-                    "state": parsed.get("state"),
-                    "date_filed": filed_str,
-                    "date_of_first_sale": date_of_first_sale,
-                    "amount_raised": parsed.get("amount_raised"),
-                    "industry_group": parsed.get("industry_group"),
-                    "entity_type": parsed.get("entity_type"),
-                    "accession_number": accession_no,
-                    "raw_url": raw_url,
-                    "accelerator_id": acc_id,
-                }
-
-                if upsert_filing_targeted(conn, filing_row):
+                if upsert_filing(conn, filing_row):
                     inserted += 1
                     print(f"  [{name}] NEW filing {accession_no} filed {filed_str} amount={parsed.get('amount_raised')}")
                 else:
@@ -442,34 +498,20 @@ def scrape_targeted(days_back: int = 180):
     print(f"\nTargeted scan done. New filings: {inserted}, Already known: {skipped}, Failed: {failed}")
 
 
-def upsert_filing_targeted(conn, filing: dict) -> bool:
-    sql = """
-        INSERT INTO edgar_filings
-            (company_name, state, date_filed, date_of_first_sale, amount_raised,
-             industry_group, entity_type, accession_number, raw_url, accelerator_id)
-        VALUES
-            (%(company_name)s, %(state)s, %(date_filed)s, %(date_of_first_sale)s,
-             %(amount_raised)s, %(industry_group)s, %(entity_type)s,
-             %(accession_number)s, %(raw_url)s, %(accelerator_id)s)
-        ON CONFLICT (accession_number) DO NOTHING
-        RETURNING id
-    """
-    with conn.cursor() as cur:
-        cur.execute(sql, filing)
-        return cur.fetchone() is not None
-
-
 if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=["broad", "targeted"], default="broad")
+    parser.add_argument("--mode", choices=["broad", "targeted", "chunked"], default="broad")
     parser.add_argument("--days", type=int, default=90)
     parser.add_argument("--limit", type=int, default=2000, help="Max non-fund stubs (broad mode)")
     parser.add_argument("--from-offset", type=int, default=0, help="EFTS start offset (broad mode)")
+    parser.add_argument("--chunk-days", type=int, default=30, help="Days per window (chunked mode)")
     args = parser.parse_args()
 
     if args.mode == "targeted":
         scrape_targeted(days_back=args.days)
+    elif args.mode == "chunked":
+        scrape_chunked(days_back=args.days, chunk_days=args.chunk_days)
     else:
         scrape(days_back=args.days, limit=args.limit, start_offset=args.from_offset)

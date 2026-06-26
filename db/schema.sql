@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS accelerator_companies (
     cik_confidence TEXT,             -- 'exact', 'fuzzy', or NULL
     jobs_url TEXT,                   -- careers page if known (Pear provides this)
     is_excluded BOOLEAN NOT NULL DEFAULT FALSE,
+    yc_is_hiring BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -31,6 +32,7 @@ CREATE TABLE IF NOT EXISTS edgar_filings (
     standalone_source TEXT,              -- 'techcrunch' or 'producthunt' for non-accelerator validated startups
     investor_count INT,                  -- totalNumberAlreadyInvested from Form D XML
     vc_firm_signal TEXT,                 -- VC firm name if found in director/promoter relationship clarifications
+    offering_name TEXT,                  -- nameOfOffering from Form D XML (e.g. "Series A Preferred Stock")
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 

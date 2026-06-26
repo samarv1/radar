@@ -64,10 +64,8 @@ def scrape():
         with conn.cursor() as cur:
             for c in companies:
                 name = c.get("name", "").strip()
-                slug = c.get("slug", "").strip()
                 website = c.get("website", "").strip()
 
-                # Match by slug first (most reliable), then name
                 cur.execute(
                     """
                     SELECT id FROM accelerator_companies
@@ -86,9 +84,15 @@ def scrape():
                     matched_ids.add(row[0])
 
         reset_count = 0
-        if matched_ids:
-            with conn.cursor() as cur:
-                # Only reset companies not scraped in last 7 days — avoids re-scraping
+        with conn.cursor() as cur:
+            if matched_ids:
+                # Persist the hiring flag so companies appear on the hiring tab
+                # even before a careers ATS is discovered.
+                cur.execute(
+                    "UPDATE accelerator_companies SET yc_is_hiring = TRUE WHERE id = ANY(%s)",
+                    (list(matched_ids),),
+                )
+                # Only reset careers_scraped_at for stale companies — avoids re-scraping
                 # the entire hiring cohort every day.
                 cur.execute(
                     """
@@ -101,7 +105,19 @@ def scrape():
                     (list(matched_ids),),
                 )
                 reset_count = cur.rowcount
-            conn.commit()
+
+            # Clear the flag for YC companies that fell off the isHiring list.
+            cur.execute(
+                """
+                UPDATE accelerator_companies
+                SET yc_is_hiring = FALSE
+                WHERE accelerator = 'yc'
+                  AND yc_is_hiring = TRUE
+                  AND id != ALL(%s)
+                """,
+                (list(matched_ids) if matched_ids else [],),
+            )
+        conn.commit()
 
         print(f"Matched {len(matched_ids)} companies in DB → reset {reset_count} careers_scraped_at (stale >7d)")
         print("Done.")

@@ -87,14 +87,7 @@ const ACCELERATOR_OPTIONS: [string, string][] = [
   ["unknown", "None / Unknown"],
 ];
 
-const HIRING_ACCELERATOR_OPTIONS: [string, string][] = [
-  ["yc", "YC"],
-  ["a16z", "a16z"],
-  ["sequoia", "Sequoia"],
-  ["pear", "Pear"],
-  ["lightspeed", "Lightspeed"],
-  ["techstars", "Techstars"],
-];
+const HIRING_ACCELERATOR_OPTIONS = ACCELERATOR_OPTIONS.filter(([v]) => v !== "unknown");
 
 const ROLE_TYPE_OPTIONS: [string, string][] = [
   ["eng", "Eng"],
@@ -109,16 +102,16 @@ const ROLE_LEVEL_OPTIONS: [string, string][] = [
   ["experienced", "Other"],
 ];
 
-function CheckboxList({
+function CheckboxList<T extends string | number>({
   options,
   values,
   onChange,
 }: {
-  options: [string, string][];
-  values: string[];
-  onChange: (v: string[]) => void;
+  options: [T, string][];
+  values: T[];
+  onChange: (v: T[]) => void;
 }) {
-  function toggle(val: string) {
+  function toggle(val: T) {
     onChange(
       values.includes(val) ? values.filter((v) => v !== val) : [...values, val]
     );
@@ -129,42 +122,7 @@ function CheckboxList({
         const checked = values.includes(val);
         return (
           <button
-            key={val}
-            onClick={() => toggle(val)}
-            className="flex items-center gap-2.5 px-2 py-1.5 rounded-md hover:bg-muted text-sm text-left w-full transition-colors"
-          >
-            <div className={`w-4 h-4 rounded border shrink-0 flex items-center justify-center transition-colors ${checked ? "bg-foreground border-foreground" : "border-border"}`}>
-              {checked && <Check size={10} className="text-background" strokeWidth={3} />}
-            </div>
-            {label}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-function NumberCheckboxList({
-  options,
-  values,
-  onChange,
-}: {
-  options: [number, string][];
-  values: number[];
-  onChange: (v: number[]) => void;
-}) {
-  function toggle(val: number) {
-    onChange(
-      values.includes(val) ? values.filter((v) => v !== val) : [...values, val]
-    );
-  }
-  return (
-    <div className="flex flex-col min-w-[120px]">
-      {options.map(([val, label]) => {
-        const checked = values.includes(val);
-        return (
-          <button
-            key={val}
+            key={String(val)}
             onClick={() => toggle(val)}
             className="flex items-center gap-2.5 px-2 py-1.5 rounded-md hover:bg-muted text-sm text-left w-full transition-colors"
           >
@@ -265,7 +223,7 @@ export function FilterBar({ filters, onChange }: Props) {
       </FilterDropdown>
 
       <FilterDropdown label="Filed within" activeCount={filters.days.length}>
-        <NumberCheckboxList
+        <CheckboxList
           options={[[30, "30d"], [60, "60d"], [90, "90d"], [180, "180d"]]}
           values={filters.days}
           onChange={(v) => onChange({ ...filters, days: v })}
@@ -273,13 +231,13 @@ export function FilterBar({ filters, onChange }: Props) {
       </FilterDropdown>
 
       <FilterDropdown label="Amount raised" activeCount={filters.amounts.length}>
-        <NumberCheckboxList
+        <CheckboxList
           options={[
             [0, "< $1M"],
-            [1_000_000, "$1M+"],
-            [5_000_000, "$5M+"],
-            [10_000_000, "$10M+"],
-            [50_000_000, "$50M+"],
+            [1_000_000, "$1M – $10M"],
+            [10_000_000, "$10M – $100M"],
+            [100_000_000, "$100M – $500M"],
+            [500_000_000, "$500M+"],
           ]}
           values={filters.amounts}
           onChange={(v) => onChange({ ...filters, amounts: v })}

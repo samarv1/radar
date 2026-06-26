@@ -30,6 +30,8 @@ _ashby_semaphore = threading.Semaphore(3)  # max 3 concurrent Ashby calls
 HEADERS = {"User-Agent": "startup-recruiting-tool contact@example.com"}
 SLEEP = 0.3
 
+_REAL_ATS = frozenset({"greenhouse", "lever", "ashby", "workable", "bamboohr"})
+
 # --- Role categorization ---
 
 INTERN = re.compile(
@@ -88,6 +90,8 @@ def categorize(title: str) -> str:
 # Patterns to detect ATS systems in redirect URLs and page HTML
 _ATS_PATTERNS = [
     ("greenhouse", re.compile(r"boards\.greenhouse\.io/([^/?\s\"']+)", re.I)),
+    # Some companies embed the Greenhouse API URL directly in their JS bundle
+    ("greenhouse", re.compile(r"boards-api\.greenhouse\.io/v1/boards/([^/?\s\"']+)", re.I)),
     ("lever",      re.compile(r"jobs\.lever\.co/([^/?\s\"']+)", re.I)),
     ("ashby",      re.compile(r"jobs\.ashbyhq\.com/([^/?\s\"']+)", re.I)),
     ("workable",   re.compile(r"apply\.workable\.com/([^/?\s\"']+)", re.I)),
@@ -360,16 +364,36 @@ def try_ashby(slug: str) -> tuple[list[dict], str] | None:
 
 # --- DB helpers ---
 
+_KNOWN_ATS_LIST = "','".join(_REAL_ATS)
+_VALID_ACCELERATORS = frozenset({"yc", "a16z", "sequoia", "lightspeed", "pear", "techstars"})
+
+
 def get_pending_companies(
     conn,
-    rescrape_after_days: int | None = None,
+    refresh_after_days: int | None = 3,
+    rediscover_after_days: int | None = 21,
     hiring_sweep: bool = False,
+    accelerator: str | None = None,
 ) -> list[dict]:
-    staleness = (
-        f"OR a.careers_scraped_at < NOW() - INTERVAL '{rescrape_after_days} days'"
-        if rescrape_after_days is not None
-        else ""
-    )
+    # Three-tier staleness: known ATS refreshes cheaply and often; not_found staggers long;
+    # NULL is always picked up (discovered once on first encounter).
+    staleness_parts = ["a.careers_scraped_at IS NULL"]
+    if refresh_after_days is not None:
+        staleness_parts.append(
+            f"(a.careers_ats IN ('{_KNOWN_ATS_LIST}') "
+            f"AND a.careers_scraped_at < NOW() - INTERVAL '{refresh_after_days} days')"
+        )
+    if rediscover_after_days is not None:
+        staleness_parts.append(
+            f"(a.careers_ats = 'not_found' "
+            f"AND a.careers_scraped_at < NOW() - INTERVAL '{rediscover_after_days} days')"
+        )
+    staleness = "AND (" + " OR ".join(staleness_parts) + ")"
+
+    if accelerator and accelerator not in _VALID_ACCELERATORS:
+        raise ValueError(f"Unknown accelerator: {accelerator!r}. Valid: {sorted(_VALID_ACCELERATORS)}")
+    accel_filter = f"AND a.accelerator = '{accelerator}'" if accelerator else ""
+
     if hiring_sweep:
         # Sweep accelerator companies regardless of EDGAR status.
         # Exclude companies with known large raises (>$100M EDGAR filing).
@@ -379,10 +403,11 @@ def get_pending_companies(
         #   Sequoia       — only Pre-Seed/Seed or Early stage
         #   Pear/Lightspeed — include all
         sql = f"""
-            SELECT DISTINCT a.id, a.name, a.website
+            SELECT DISTINCT a.id, a.name, a.website, a.careers_ats, a.careers_url
             FROM accelerator_companies a
             WHERE a.is_excluded = FALSE
-              AND (a.careers_scraped_at IS NULL {staleness})
+              {staleness}
+              {accel_filter}
               AND NOT EXISTS (
                 SELECT 1 FROM edgar_filings ef
                 WHERE ef.accelerator_id = a.id
@@ -401,17 +426,21 @@ def get_pending_companies(
         """
     else:
         sql = f"""
-            SELECT DISTINCT a.id, a.name, a.website
+            SELECT DISTINCT a.id, a.name, a.website, a.careers_ats, a.careers_url
             FROM accelerator_companies a
             JOIN edgar_filings e ON e.accelerator_id = a.id
             WHERE a.is_excluded = FALSE
               AND (e.amount_raised IS NULL OR e.amount_raised <= 100000000)
-              AND (a.careers_scraped_at IS NULL {staleness})
+              {staleness}
+              {accel_filter}
             ORDER BY a.id
         """
     with conn.cursor() as cur:
         cur.execute(sql)
-        return [{"id": r[0], "name": r[1], "website": r[2]} for r in cur.fetchall()]
+        return [
+            {"id": r[0], "name": r[1], "website": r[2], "careers_ats": r[3], "careers_url": r[4]}
+            for r in cur.fetchall()
+        ]
 
 
 def clear_jobs(conn, company_id: int):
@@ -485,42 +514,61 @@ _ATS_FETCHERS = {
     "bamboohr": try_bamboohr,
 }
 
+def _slug_from_url(ats: str, url: str) -> str | None:
+    """Extract the ATS slug from a stored board URL using the same patterns as discovery."""
+    for name, pattern in _ATS_PATTERNS:
+        if name == ats:
+            m = pattern.search(url)
+            return m.group(1).strip("/") if m else None
+    return None
+
 
 def _scrape_one(company: dict, total: int, idx: int) -> bool:
     """Scrape a single company using its own DB connection. Returns True if found."""
     name = company["name"]
     website = company["website"]
     cid = company["id"]
+    known_ats = company.get("careers_ats")
+    known_url = company.get("careers_url")
 
     matched_ats = None
     matched_jobs = []
     matched_url = None
 
-    # Only trust 'not_found' as a signal when the website looks like an actual company homepage.
-    # TC-scraped article URLs or media domains would produce false not_found results.
     valid_website = (
         bool(website)
         and _is_likely_homepage(website)
         and not _is_media_domain(website)
     )
 
-    if valid_website:
-        discovery = discover_ats(website)
-        if discovery:
-            ats_name, slug, board_url = discovery
-            fetcher = _ATS_FETCHERS.get(ats_name)
-            if fetcher:
-                result = fetcher(slug)
-                if result is not None:
-                    matched_jobs, matched_url = result
-                    matched_ats = ats_name
-                else:
-                    # ATS detected but API returned nothing (board exists, zero jobs)
-                    matched_ats = ats_name
-                    matched_url = board_url
-    elif website:
-        with _print_lock:
-            print(f"[{idx}/{total}] {name} → skipped bad URL: {website}")
+    # Fast-path: ATS + slug already known — one API call, no discovery.
+    # Falls through to full discovery if the fetch returns None (board moved/removed).
+    if known_ats in _REAL_ATS and known_url:
+        slug = _slug_from_url(known_ats, known_url)
+        if slug:
+            result = _ATS_FETCHERS[known_ats](slug)
+            if result is not None:
+                matched_jobs, matched_url = result
+                matched_ats = known_ats
+
+    if matched_ats is None:
+        # Full discovery: try each careers path and scan for ATS links.
+        if valid_website:
+            discovery = discover_ats(website)
+            if discovery:
+                ats_name, slug, board_url = discovery
+                fetcher = _ATS_FETCHERS.get(ats_name)
+                if fetcher:
+                    result = fetcher(slug)
+                    if result is not None:
+                        matched_jobs, matched_url = result
+                        matched_ats = ats_name
+                    else:
+                        matched_ats = ats_name
+                        matched_url = board_url
+        elif website:
+            with _print_lock:
+                print(f"[{idx}/{total}] {name} → skipped bad URL: {website}")
 
     conn = get_connection()
     try:
@@ -554,13 +602,21 @@ def _scrape_one(company: dict, total: int, idx: int) -> bool:
 
 def scrape(
     limit: int | None = None,
-    rescrape_after_days: int | None = None,
+    refresh_after_days: int | None = 3,
+    rediscover_after_days: int | None = 21,
     hiring_sweep: bool = False,
     workers: int = 1,
+    accelerator: str | None = None,
 ):
     conn = get_connection()
     try:
-        companies = get_pending_companies(conn, rescrape_after_days, hiring_sweep=hiring_sweep)
+        companies = get_pending_companies(
+            conn,
+            refresh_after_days=refresh_after_days,
+            rediscover_after_days=rediscover_after_days,
+            hiring_sweep=hiring_sweep,
+            accelerator=accelerator,
+        )
     finally:
         conn.close()
 
@@ -666,7 +722,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--limit", type=int, help="Only process first N companies")
     parser.add_argument("--hiring-sweep", action="store_true", help="Scrape all accelerator companies regardless of EDGAR status")
-    parser.add_argument("--rescrape-after-days", type=int, help="Re-scrape companies last scraped more than N days ago")
+    parser.add_argument("--accelerator", choices=sorted(_VALID_ACCELERATORS), help="Only scrape companies from this accelerator (e.g. yc, techstars)")
+    parser.add_argument("--refresh-after-days", type=int, default=3, help="Re-fetch job listings for known-ATS companies scraped more than N days ago (default: 3)")
+    parser.add_argument("--rediscover-after-days", type=int, default=75, help="Re-run full discovery for not_found companies scraped more than N days ago (default: 75)")
     parser.add_argument("--workers", type=int, default=1, help="Number of parallel workers (default: 1)")
     parser.add_argument("--reset-all", action="store_true", help="Wipe all ATS/careers data before re-scraping")
     parser.add_argument("--fix-websites", action="store_true", help="Clear bad website URLs (articles, media pages) so companies get re-scraped honestly")
@@ -676,4 +734,11 @@ if __name__ == "__main__":
     elif args.fix_websites:
         fix_bad_websites()
     else:
-        scrape(limit=args.limit, rescrape_after_days=args.rescrape_after_days, hiring_sweep=args.hiring_sweep, workers=args.workers)
+        scrape(
+            limit=args.limit,
+            refresh_after_days=args.refresh_after_days,
+            rediscover_after_days=args.rediscover_after_days,
+            hiring_sweep=args.hiring_sweep,
+            workers=args.workers,
+            accelerator=args.accelerator,
+        )

@@ -2,6 +2,43 @@ import { Pool } from "pg";
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
+// Deduplicates accelerator_companies by normalized website, aggregates all
+// accelerators into an array, and surfaces the worst company_status.
+const ACCEL_META_CTE = `
+  accel_meta AS (
+    SELECT
+      regexp_replace(lower(website), '^https?://(www\\.)?|/+$', '', 'g') AS norm_site,
+      array_agg(DISTINCT accelerator ORDER BY accelerator) AS accelerators,
+      MAX(CASE WHEN company_status IS NOT NULL AND company_status != 'Active'
+          THEN company_status END) AS worst_status
+    FROM accelerator_companies
+    WHERE website IS NOT NULL AND length(website) > 8
+    GROUP BY 1
+  )`;
+
+// Job counts with all categories + timing columns (used in hiring feed).
+const JOB_COUNTS_FULL = `
+  SELECT company_id,
+    SUM(CASE WHEN category = 'engineering' THEN 1 ELSE 0 END) AS eng,
+    SUM(CASE WHEN category = 'product'     THEN 1 ELSE 0 END) AS product,
+    SUM(CASE WHEN category = 'gtm'         THEN 1 ELSE 0 END) AS gtm,
+    SUM(CASE WHEN category = 'other'       THEN 1 ELSE 0 END) AS other,
+    SUM(CASE WHEN category = 'intern'      THEN 1 ELSE 0 END) AS intern,
+    SUM(CASE WHEN category = 'new_grad'    THEN 1 ELSE 0 END) AS new_grad,
+    MAX(posted_at)      AS latest_posted_at,
+    MAX(first_seen_at)  AS latest_first_seen_at,
+    MAX(scraped_at)     AS latest_scraped_at
+  FROM job_listings GROUP BY company_id`;
+
+// Job counts for the four main role categories only (used in raised feed).
+const JOB_COUNTS_BASIC = `
+  SELECT company_id,
+    SUM(CASE WHEN category = 'engineering' THEN 1 ELSE 0 END) AS eng,
+    SUM(CASE WHEN category = 'product'     THEN 1 ELSE 0 END) AS product,
+    SUM(CASE WHEN category = 'gtm'         THEN 1 ELSE 0 END) AS gtm,
+    SUM(CASE WHEN category = 'other'       THEN 1 ELSE 0 END) AS other
+  FROM job_listings GROUP BY company_id`;
+
 export type Company = {
   id: number;
   name: string;
@@ -30,19 +67,7 @@ export type Company = {
 
 export async function getHiringFeed(): Promise<Company[]> {
   const { rows } = await pool.query<Company>(`
-    WITH accel_meta AS (
-      -- Group accelerator_companies by normalized website to detect duplicates.
-      -- Aggregates all accelerators into an array and surfaces the worst company_status
-      -- so that a company marked Public/Acquired in any portfolio is excluded everywhere.
-      SELECT
-        regexp_replace(lower(website), '^https?://(www\\.)?|/+$', '', 'g') AS norm_site,
-        array_agg(DISTINCT accelerator ORDER BY accelerator) AS accelerators,
-        MAX(CASE WHEN company_status IS NOT NULL AND company_status != 'Active'
-            THEN company_status END) AS worst_status
-      FROM accelerator_companies
-      WHERE website IS NOT NULL AND length(website) > 8
-      GROUP BY 1
-    )
+    WITH ${ACCEL_META_CTE}
     SELECT * FROM (
       SELECT DISTINCT ON (COALESCE(am.norm_site, a.id::text))
         a.id, a.name, COALESCE(a.website, fn_site.website) AS website,
@@ -80,19 +105,7 @@ export async function getHiringFeed(): Promise<Company[]> {
         WHERE accelerator_id = a.id AND amount_usd IS NOT NULL
         ORDER BY published_at DESC LIMIT 1
       ) fn_amt ON TRUE
-      JOIN (
-        SELECT company_id,
-          SUM(CASE WHEN category = 'engineering' THEN 1 ELSE 0 END) AS eng,
-          SUM(CASE WHEN category = 'product'     THEN 1 ELSE 0 END) AS product,
-          SUM(CASE WHEN category = 'gtm'         THEN 1 ELSE 0 END) AS gtm,
-          SUM(CASE WHEN category = 'other'       THEN 1 ELSE 0 END) AS other,
-          SUM(CASE WHEN category = 'intern'      THEN 1 ELSE 0 END) AS intern,
-          SUM(CASE WHEN category = 'new_grad'    THEN 1 ELSE 0 END) AS new_grad,
-          MAX(posted_at)      AS latest_posted_at,
-          MAX(first_seen_at)  AS latest_first_seen_at,
-          MAX(scraped_at)     AS latest_scraped_at
-        FROM job_listings GROUP BY company_id
-      ) h ON h.company_id = a.id
+      JOIN (${JOB_COUNTS_FULL}) h ON h.company_id = a.id
       WHERE a.is_excluded = FALSE
         AND (
           -- Companies with confirmed open roles scraped in the last 90 days
@@ -130,16 +143,7 @@ export async function getHiringFeed(): Promise<Company[]> {
 
 export async function getFeed(): Promise<Company[]> {
   const { rows } = await pool.query<Company>(`
-    WITH accel_meta AS (
-      SELECT
-        regexp_replace(lower(website), '^https?://(www\\.)?|/+$', '', 'g') AS norm_site,
-        array_agg(DISTINCT accelerator ORDER BY accelerator) AS accelerators,
-        MAX(CASE WHEN company_status IS NOT NULL AND company_status != 'Active'
-            THEN company_status END) AS worst_status
-      FROM accelerator_companies
-      WHERE website IS NOT NULL AND length(website) > 8
-      GROUP BY 1
-    )
+    WITH ${ACCEL_META_CTE}
     SELECT * FROM (
       -- Accelerator-backed companies with EDGAR filings (deduped by website)
       SELECT * FROM (
@@ -165,14 +169,7 @@ export async function getFeed(): Promise<Company[]> {
         JOIN edgar_filings e ON e.accelerator_id = a.id
         LEFT JOIN accel_meta am
           ON regexp_replace(lower(a.website), '^https?://(www\\.)?|/+$', '', 'g') = am.norm_site
-        LEFT JOIN (
-          SELECT company_id,
-            SUM(CASE WHEN category = 'engineering' THEN 1 ELSE 0 END) AS eng,
-            SUM(CASE WHEN category = 'product'     THEN 1 ELSE 0 END) AS product,
-            SUM(CASE WHEN category = 'gtm'         THEN 1 ELSE 0 END) AS gtm,
-            SUM(CASE WHEN category = 'other'       THEN 1 ELSE 0 END) AS other
-          FROM job_listings GROUP BY company_id
-        ) h ON h.company_id = a.id
+        LEFT JOIN (${JOB_COUNTS_BASIC}) h ON h.company_id = a.id
         LEFT JOIN LATERAL (
           SELECT round_type, amount_usd FROM funding_news
           WHERE accelerator_id = a.id AND round_type IS NOT NULL
@@ -308,14 +305,7 @@ export async function getFeed(): Promise<Company[]> {
         a.tags
       FROM accelerator_companies a
       JOIN funding_news fn ON fn.accelerator_id = a.id
-      LEFT JOIN (
-        SELECT company_id,
-          SUM(CASE WHEN category = 'engineering' THEN 1 ELSE 0 END) AS eng,
-          SUM(CASE WHEN category = 'product'     THEN 1 ELSE 0 END) AS product,
-          SUM(CASE WHEN category = 'gtm'         THEN 1 ELSE 0 END) AS gtm,
-          SUM(CASE WHEN category = 'other'       THEN 1 ELSE 0 END) AS other
-        FROM job_listings GROUP BY company_id
-      ) h ON h.company_id = a.id
+      LEFT JOIN (${JOB_COUNTS_BASIC}) h ON h.company_id = a.id
       WHERE a.is_excluded = FALSE
         AND fn.source != 'a16z_build'
         AND fn.published_at >= NOW() - INTERVAL '180 days'

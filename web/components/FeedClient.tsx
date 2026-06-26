@@ -52,9 +52,18 @@ function applyFilters(companies: Company[], f: Filters): Company[] {
 
     if (f.amounts.length > 0) {
       const amt = c.amount_raised;
-      const passes = f.amounts.some(threshold => {
-        if (threshold === 0) return amt === null || amt < 1_000_000;
-        return amt !== null && amt >= threshold;
+      const BUCKET_UPPER: Record<number, number | null> = {
+        0: 1_000_000,
+        1_000_000: 10_000_000,
+        10_000_000: 100_000_000,
+        100_000_000: 500_000_000,
+        500_000_000: null,
+      };
+      const passes = f.amounts.some(lo => {
+        const hi = BUCKET_UPPER[lo];
+        if (lo === 0) return amt === null || amt < 1_000_000;
+        if (hi === null) return amt !== null && amt >= lo;
+        return amt !== null && amt >= lo && amt < hi;
       });
       if (!passes) return false;
     }
@@ -175,25 +184,6 @@ export function FeedClient({
     setRaisedPage(1);
   }
 
-  function handleHiringAccelChange(v: string[]) {
-    setHiringAccelerators(v);
-    setHiringPage(1);
-  }
-
-  function handleHiringRoleTypesChange(v: string[]) {
-    setHiringRoleTypes(v);
-    setHiringPage(1);
-  }
-
-  function handleHiringRoleLevelsChange(v: string[]) {
-    setHiringRoleLevels(v);
-    setHiringPage(1);
-  }
-
-  function handleHiringVerticalsChange(v: string[]) {
-    setHiringVerticals(v);
-    setHiringPage(1);
-  }
 
 const visible = applyFilters(companies, filters);
   // eslint-disable-next-line react-hooks/purity
@@ -360,10 +350,10 @@ const visible = applyFilters(companies, filters);
                 roleTypes={hiringRoleTypes}
                 roleLevels={hiringRoleLevels}
                 verticals={hiringVerticals}
-                onAccelerators={handleHiringAccelChange}
-                onRoleTypes={handleHiringRoleTypesChange}
-                onRoleLevels={handleHiringRoleLevelsChange}
-                onVerticals={handleHiringVerticalsChange}
+                onAccelerators={(v) => { setHiringAccelerators(v); setHiringPage(1); }}
+                onRoleTypes={(v) => { setHiringRoleTypes(v); setHiringPage(1); }}
+                onRoleLevels={(v) => { setHiringRoleLevels(v); setHiringPage(1); }}
+                onVerticals={(v) => { setHiringVerticals(v); setHiringPage(1); }}
               />
               {filteredHiring.length === 0 ? (
                 <p className="text-muted-foreground text-sm text-center py-12">

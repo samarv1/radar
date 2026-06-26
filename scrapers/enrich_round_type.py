@@ -1,9 +1,10 @@
 """
 Round-type enrichment for companies missing round_type.
 
-Two-pass approach (no API keys required):
+Three-pass approach (no API keys required):
   Pass 1: Search TechCrunch by company name, apply ±180-day timing gate.
-  Pass 2: Scrape company's own press/blog/news page, apply ±180-day timing gate.
+  Pass 2: EDGAR Form D offering name (edgar_filings.offering_name — zero HTTP calls).
+  Pass 3: Search Crunchbase News by company name, apply ±180-day timing gate.
 
 Results are written to accelerator_companies.round_type.
 
@@ -24,9 +25,27 @@ from db.connection import get_connection
 from scrapers.techcrunch import ROUND_RE, AMOUNT_RE, parse_round, strip_tags
 
 WP_API = "https://techcrunch.com/wp-json/wp/v2/posts"
+CBN_WP_API = "https://news.crunchbase.com/wp-json/wp/v2/posts"
 HEADERS = {"User-Agent": "startup-recruiting-tool contact@example.com"}
 SLEEP = 0.5
 WINDOW_DAYS = 180
+
+OFFERING_ROUND_RE = re.compile(r"\b(pre-?seed|seed|series [a-g])\b", re.IGNORECASE)
+
+
+def round_from_offering(offering_name: str | None) -> str | None:
+    """Parse round type from EDGAR nameOfOffering field (e.g. 'Series A Preferred Stock')."""
+    if not offering_name:
+        return None
+    m = OFFERING_ROUND_RE.search(offering_name)
+    if not m:
+        return None
+    r = m.group(1).lower()
+    if "pre" in r:
+        return "Pre-Seed"
+    if r == "seed":
+        return "Seed"
+    return f"Series {r[-1].upper()}"
 
 DATE_RE = re.compile(
     r"\b(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
@@ -61,11 +80,11 @@ def parse_date_from_text(text: str) -> datetime | None:
         return None
 
 
-def search_techcrunch(company_name: str, reference_date: datetime) -> str | None:
-    """Search TC for a funding article near reference_date. Returns round type or None."""
+def _search_wp_posts(api_url: str, company_name: str, reference_date: datetime) -> str | None:
+    """Search a WordPress REST API for a funding article near reference_date. Returns round type or None."""
     try:
         resp = requests.get(
-            WP_API,
+            api_url,
             params={
                 "search": company_name,
                 "per_page": 5,
@@ -113,6 +132,16 @@ def search_techcrunch(company_name: str, reference_date: datetime) -> str | None
             return f"Series {r[-1].upper()}"
 
     return None
+
+
+def search_techcrunch(company_name: str, reference_date: datetime) -> str | None:
+    """Search TechCrunch for a funding article near reference_date. Returns round type or None."""
+    return _search_wp_posts(WP_API, company_name, reference_date)
+
+
+def search_crunchbase_news(company_name: str, reference_date: datetime) -> str | None:
+    """Search Crunchbase News for a funding article near reference_date. Returns round type or None."""
+    return _search_wp_posts(CBN_WP_API, company_name, reference_date)
 
 
 def search_press_page(website: str, reference_date: datetime) -> str | None:
@@ -165,7 +194,11 @@ def get_companies_needing_enrichment(conn) -> list[dict]:
                      FROM funding_news fn
                      WHERE fn.accelerator_id = a.id
                      ORDER BY fn.published_at DESC LIMIT 1)
-                ) AS reference_date
+                ) AS reference_date,
+                (SELECT ef.offering_name
+                 FROM edgar_filings ef
+                 WHERE ef.accelerator_id = a.id AND ef.offering_name IS NOT NULL
+                 ORDER BY ef.date_filed DESC LIMIT 1) AS offering_name
             FROM accelerator_companies a
             WHERE a.round_type IS NULL
               AND a.is_excluded = FALSE
@@ -214,6 +247,16 @@ def enrich(limit: int | None = None, dry_run: bool = False):
             # Pass 1: TechCrunch search
             round_type = search_techcrunch(name, reference_date)
             source = "tc_search" if round_type else None
+
+            # Pass 2: EDGAR offering name (zero extra HTTP calls — already enriched)
+            if not round_type:
+                round_type = round_from_offering(c.get("offering_name"))
+                source = "edgar_offering" if round_type else None
+
+            # Pass 3: Crunchbase News search
+            if not round_type:
+                round_type = search_crunchbase_news(name, reference_date)
+                source = "cbn_search" if round_type else None
 
             # Press page scraping disabled — too many false positives from
             # JS-rendered sites where round labels appear inside bundle code.

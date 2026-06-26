@@ -58,12 +58,19 @@ def fetch_xml(url: str) -> str | None:
         return None
 
 
-def parse_enrichment(xml_text: str) -> tuple[int | None, str | None]:
-    """Returns (investor_count, vc_firm_signal)."""
+def parse_enrichment(xml_text: str) -> tuple[int | None, str | None, str | None]:
+    """Returns (investor_count, vc_firm_signal, offering_name)."""
     try:
         root = ET.fromstring(NS_RE.sub("", xml_text))
     except ET.ParseError:
-        return None, None
+        return None, None, None
+
+    def find_text(*tags):
+        for tag in tags:
+            el = root.find(f".//{tag}")
+            if el is not None and el.text and el.text.strip():
+                return el.text.strip()
+        return None
 
     # investor count
     investor_count = None
@@ -99,7 +106,10 @@ def parse_enrichment(xml_text: str) -> tuple[int | None, str | None]:
         if vc_firm_signal:
             break
 
-    return investor_count, vc_firm_signal
+    # Offering name — often contains round designation e.g. "Series A Preferred Stock"
+    offering_name = find_text("nameOfOffering", "offeringName", "securityType")
+
+    return investor_count, vc_firm_signal, offering_name
 
 
 def run(reprocess_all: bool = False):
@@ -128,18 +138,19 @@ def run(reprocess_all: bool = False):
                 print(f"  SKIP  {company_name[:40]} — fetch failed")
                 continue
 
-            investor_count, vc_firm_signal = parse_enrichment(xml_text)
+            investor_count, vc_firm_signal, offering_name = parse_enrichment(xml_text)
 
             with conn.cursor() as cur:
                 cur.execute(
-                    "UPDATE edgar_filings SET investor_count = %s, vc_firm_signal = %s WHERE id = %s",
-                    (investor_count, vc_firm_signal, edgar_id),
+                    "UPDATE edgar_filings SET investor_count = %s, vc_firm_signal = %s, offering_name = %s WHERE id = %s",
+                    (investor_count, vc_firm_signal, offering_name, edgar_id),
                 )
             updated += 1
 
             vc_tag = f" ← VC: {vc_firm_signal}" if vc_firm_signal else ""
             inv_str = str(investor_count) if investor_count is not None else "?"
-            print(f"  OK    {company_name[:40]:<40}  investors={inv_str}{vc_tag}")
+            off_tag = f" | {offering_name[:30]}" if offering_name else ""
+            print(f"  OK    {company_name[:40]:<40}  investors={inv_str}{vc_tag}{off_tag}")
 
             if updated % 50 == 0:
                 conn.commit()
