@@ -2,7 +2,7 @@
 
 import { Flame, Bookmark } from "lucide-react";
 import { Card, CardHeader } from "@/components/ui/card";
-import { getRoundFromAmount, VERTICAL_KEYWORDS, tagMatchesKeyword } from "@/components/FilterBar";
+import { VERTICAL_KEYWORDS, tagMatchesKeyword } from "@/components/FilterBar";
 import type { Company } from "@/lib/db";
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
@@ -34,13 +34,6 @@ function isRecent(date_filed: string): boolean {
   return Date.now() - new Date(date_filed).getTime() < THIRTY_DAYS_MS;
 }
 
-const ROUND_LABELS: Record<string, string> = {
-  seed: "Seed",
-  series_a: "Series A",
-  series_b: "Series B",
-  series_c: "Series C+",
-};
-
 const SOURCE_LABELS: Record<string, string> = {
   yc: "YC",
   a16z: "a16z",
@@ -52,6 +45,7 @@ const SOURCE_LABELS: Record<string, string> = {
 
 function formatAmount(n: number | null): string | null {
   if (n === null || n < 10_000) return null;
+  if (n >= 1_000_000_000) return `$${(n / 1_000_000_000).toFixed(1).replace(/\.0$/, "")}B`;
   if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(0)}M`;
   if (n >= 1_000) return `$${(n / 1_000).toFixed(0)}K`;
   return null;
@@ -78,6 +72,7 @@ function OpenRoles({ company }: { company: Company }) {
 
   let status: React.ReactNode;
   if (!hasData) {
+    // not_found means our scraper didn't detect a board, not that they're definitely not hiring
     status = <span className="text-muted-foreground/50">—</span>;
   } else if (total === 0) {
     status = <span className="text-muted-foreground/50">none</span>;
@@ -111,9 +106,9 @@ export function CompanyCard({
   const amount = formatAmount(company.amount_raised);
   const fresh = isRecent(company.date_filed);
   const verticals = getVerticals(company.tags);
-  const roundLabel = ROUND_LABELS[getRoundFromAmount(company.amount_raised)] ?? null;
-  const hasAccel = SOURCE_LABELS[company.accelerator] !== undefined;
-  const showAccelRow = hasAccel || (!hideBatch && !!company.batch);
+  const roundLabel = company.round_type ?? null;
+  const accelBadges = (company.accelerators ?? [company.accelerator]).filter(a => SOURCE_LABELS[a]);
+  const showAccelRow = accelBadges.length > 0 || (!hideBatch && !!company.batch);
   // Each variable row contributes (2px space-y margin + height)px to the left column.
   // accel row: 22px, chips row: 26px, openRoles row: always 22px. Target = 70px.
   // Spacer itself gets 2px margin-top, so spacerH = target - present rows - 2.
@@ -138,11 +133,11 @@ export function CompanyCard({
             </p>
             {showAccelRow && (
               <div className="flex items-center gap-1.5 flex-wrap">
-                {hasAccel && (
-                  <span className="text-xs font-medium text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
-                    {SOURCE_LABELS[company.accelerator]}
+                {accelBadges.map((a) => (
+                  <span key={a} className="text-xs font-medium text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
+                    {SOURCE_LABELS[a]}
                   </span>
-                )}
+                ))}
                 {!hideBatch && company.batch && (
                   <span className="text-xs text-muted-foreground">{company.batch}</span>
                 )}
@@ -174,8 +169,8 @@ export function CompanyCard({
                   : (company.date_source === "announced" || (amount !== null && !company.has_edgar))
                     ? "announced "
                     : company.date_source === "posted"
-                      ? "last posted "
-                      : "last checked "}
+                      ? "posted "
+                      : "discovered "}
                 {formatDate(company.date_filed)}
               </span>
             </p>

@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useEffect, useRef } from "react";
 import { Radar, Bookmark, ChevronLeft, ChevronRight } from "lucide-react";
-import { FilterBar, HiringFilterBar, DEFAULT_FILTERS, VERTICAL_KEYWORDS, tagMatchesKeyword, getRoundFromAmount, type Filters } from "@/components/FilterBar";
+import { FilterBar, HiringFilterBar, DEFAULT_FILTERS, VERTICAL_KEYWORDS, tagMatchesKeyword, normalizeRoundType, type Filters } from "@/components/FilterBar";
 import { CompanyCard } from "@/components/CompanyCard";
 import { useBookmarks } from "@/lib/useBookmarks";
 import type { Company } from "@/lib/db";
@@ -36,8 +36,9 @@ function matchesVertical(tags: string[] | null, verticals: string[]): boolean {
 function applyFilters(companies: Company[], f: Filters): Company[] {
   return companies.filter((c) => {
     if (f.accelerators.length > 0) {
-      const isKnown = KNOWN_ACCELERATORS.includes(c.accelerator);
-      const matchesAccel = f.accelerators.includes(c.accelerator);
+      const accels = c.accelerators ?? [c.accelerator];
+      const isKnown = accels.some(a => KNOWN_ACCELERATORS.includes(a));
+      const matchesAccel = accels.some(a => f.accelerators.includes(a));
       const matchesUnknown = f.accelerators.includes("unknown") && !isKnown;
       if (!matchesAccel && !matchesUnknown) return false;
     }
@@ -50,12 +51,26 @@ function applyFilters(companies: Company[], f: Filters): Company[] {
     }
 
     if (f.amounts.length > 0) {
-      if (c.amount_raised === null || c.amount_raised > Math.max(...f.amounts)) return false;
+      const amt = c.amount_raised;
+      const BUCKET_UPPER: Record<number, number | null> = {
+        0: 1_000_000,
+        1_000_000: 10_000_000,
+        10_000_000: 100_000_000,
+        100_000_000: 500_000_000,
+        500_000_000: null,
+      };
+      const passes = f.amounts.some(lo => {
+        const hi = BUCKET_UPPER[lo];
+        if (lo === 0) return amt === null || amt < 1_000_000;
+        if (hi === null) return amt !== null && amt >= lo;
+        return amt !== null && amt >= lo && amt < hi;
+      });
+      if (!passes) return false;
     }
 
     if (f.verticals.length > 0 && !matchesVertical(c.tags, f.verticals)) return false;
 
-    if (f.rounds.length > 0 && !f.rounds.includes(getRoundFromAmount(c.amount_raised))) return false;
+    if (f.rounds.length > 0 && !f.rounds.includes(normalizeRoundType(c.round_type))) return false;
 
     return true;
   });
@@ -63,7 +78,10 @@ function applyFilters(companies: Company[], f: Filters): Company[] {
 
 function applyHiringFilters(companies: Company[], accelerators: string[], roleTypes: string[], roleLevels: string[], verticals: string[]): Company[] {
   return companies.filter((c) => {
-    if (accelerators.length > 0 && !accelerators.includes(c.accelerator)) return false;
+    if (accelerators.length > 0) {
+      const accels = c.accelerators ?? [c.accelerator];
+      if (!accels.some(a => accelerators.includes(a))) return false;
+    }
     if (verticals.length > 0 && !matchesVertical(c.tags, verticals)) return false;
     if (roleTypes.length > 0) {
       const hasType = roleTypes.some((r) => {
@@ -149,7 +167,7 @@ export function FeedClient({
   const [hiringRoleLevels, setHiringRoleLevels] = useState<string[]>([]);
   const [hiringVerticals, setHiringVerticals] = useState<string[]>([]);
   const [expandedOld, setExpandedOld] = useState(false);
-  const [tab, setTab] = useState<"raised" | "hiring">("raised");
+  const [tab, setTab] = useState<"raised" | "hiring">("hiring");
   const [view, setView] = useState<"feed" | "bookmarks">("feed");
   const [raisedPage, setRaisedPage] = useState(1);
   const [hiringPage, setHiringPage] = useState(1);
@@ -166,25 +184,6 @@ export function FeedClient({
     setRaisedPage(1);
   }
 
-  function handleHiringAccelChange(v: string[]) {
-    setHiringAccelerators(v);
-    setHiringPage(1);
-  }
-
-  function handleHiringRoleTypesChange(v: string[]) {
-    setHiringRoleTypes(v);
-    setHiringPage(1);
-  }
-
-  function handleHiringRoleLevelsChange(v: string[]) {
-    setHiringRoleLevels(v);
-    setHiringPage(1);
-  }
-
-  function handleHiringVerticalsChange(v: string[]) {
-    setHiringVerticals(v);
-    setHiringPage(1);
-  }
 
 const visible = applyFilters(companies, filters);
   // eslint-disable-next-line react-hooks/purity
@@ -268,17 +267,6 @@ const visible = applyFilters(companies, filters);
           {/* Tab switcher */}
           <div className="flex gap-1 mb-6 border-b border-border">
             <button
-              onClick={() => setTab("raised")}
-              className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ${
-                tab === "raised"
-                  ? "border-foreground text-foreground"
-                  : "border-transparent text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              Raised
-              <span className="ml-1.5 text-xs text-muted-foreground">{visible.length}</span>
-            </button>
-            <button
               onClick={() => setTab("hiring")}
               className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ${
                 tab === "hiring"
@@ -288,6 +276,17 @@ const visible = applyFilters(companies, filters);
             >
               Actively Hiring
               <span className="ml-1.5 text-xs text-muted-foreground">{filteredHiring.length}</span>
+            </button>
+            <button
+              onClick={() => setTab("raised")}
+              className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ${
+                tab === "raised"
+                  ? "border-foreground text-foreground"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Raised
+              <span className="ml-1.5 text-xs text-muted-foreground">{visible.length}</span>
             </button>
           </div>
 
@@ -351,10 +350,10 @@ const visible = applyFilters(companies, filters);
                 roleTypes={hiringRoleTypes}
                 roleLevels={hiringRoleLevels}
                 verticals={hiringVerticals}
-                onAccelerators={handleHiringAccelChange}
-                onRoleTypes={handleHiringRoleTypesChange}
-                onRoleLevels={handleHiringRoleLevelsChange}
-                onVerticals={handleHiringVerticalsChange}
+                onAccelerators={(v) => { setHiringAccelerators(v); setHiringPage(1); }}
+                onRoleTypes={(v) => { setHiringRoleTypes(v); setHiringPage(1); }}
+                onRoleLevels={(v) => { setHiringRoleLevels(v); setHiringPage(1); }}
+                onVerticals={(v) => { setHiringVerticals(v); setHiringPage(1); }}
               />
               {filteredHiring.length === 0 ? (
                 <p className="text-muted-foreground text-sm text-center py-12">
