@@ -57,7 +57,7 @@ def fetch_batch(batch: str) -> list[dict]:
             "hitsPerPage": 1000,
             "page": page,
             "filters": f'batch:"{batch}"',
-            "attributesToRetrieve": ["name", "batch", "one_liner", "website", "tags", "slug"],
+            "attributesToRetrieve": ["name", "batch", "one_liner", "website", "tags", "slug", "status"],
         }
         resp = requests.post(ALGOLIA_URL, json=payload, headers=HEADERS, timeout=30)
         time.sleep(SLEEP)
@@ -87,16 +87,17 @@ def fetch_all_companies() -> list[dict]:
 def upsert_company(conn, row: dict) -> bool:
     sql = """
         INSERT INTO accelerator_companies
-            (name, website, accelerator, batch, description, tags, source_url)
+            (name, website, accelerator, batch, description, tags, source_url, company_status)
         VALUES
-            (%(name)s, %(website)s, 'yc', %(batch)s, %(description)s, %(tags)s, %(source_url)s)
+            (%(name)s, %(website)s, 'yc', %(batch)s, %(description)s, %(tags)s, %(source_url)s, %(company_status)s)
         ON CONFLICT (source_url) DO UPDATE SET
-            name        = EXCLUDED.name,
-            website     = EXCLUDED.website,
-            batch       = EXCLUDED.batch,
-            description = EXCLUDED.description,
-            tags        = EXCLUDED.tags,
-            updated_at  = NOW()
+            name           = EXCLUDED.name,
+            website        = EXCLUDED.website,
+            batch          = EXCLUDED.batch,
+            description    = EXCLUDED.description,
+            tags           = EXCLUDED.tags,
+            company_status = EXCLUDED.company_status,
+            updated_at     = NOW()
         RETURNING (xmax = 0) AS inserted
     """
     with conn.cursor() as cur:
@@ -133,6 +134,7 @@ def scrape():
                 "description": (hit.get("one_liner") or "").strip() or None,
                 "tags": tags,
                 "source_url": f"https://www.ycombinator.com/companies/{slug}",
+                "company_status": hit.get("status") or None,
             }
 
             is_new = upsert_company(conn, row)

@@ -15,7 +15,7 @@ from scrapers.a16z_build import scrape as scrape_a16z_build
 from scrapers.careers import scrape as scrape_careers
 from scrapers.cik_lookup import run as run_cik_lookup
 from scrapers.cross_reference import run as run_cross_reference
-from scrapers.edgar import scrape as scrape_edgar
+from scrapers.edgar import scrape as scrape_edgar, scrape_chunked as scrape_edgar_chunked, scrape_targeted as scrape_edgar_targeted
 from scrapers.lightspeed import scrape as scrape_lightspeed
 from scrapers.pear import scrape as scrape_pear
 from scrapers.producthunt import scrape as scrape_ph
@@ -29,8 +29,8 @@ from scrapers.yc_hiring import scrape as scrape_yc_hiring
 
 
 def run_daily():
-    print("=== EDGAR filings ===")
-    scrape_edgar()
+    print("=== EDGAR filings (chunked, 60 days) ===")
+    scrape_edgar_chunked(days_back=60, chunk_days=30)
 
     print("\n=== CIK lookup ===")
     run_cik_lookup()
@@ -39,7 +39,7 @@ def run_daily():
     run_cross_reference()
 
     print("\n=== Careers (EDGAR-matched) ===")
-    scrape_careers()
+    scrape_careers(workers=4)
 
     print("\n=== a16z Build newsletter ===")
     scrape_a16z_build(days_back=2)
@@ -47,16 +47,18 @@ def run_daily():
     print("\n=== YC hiring signal ===")
     scrape_yc_hiring()
 
-    print("\n=== Careers (new accelerator companies) ===")
-    # Only touches companies with NULL careers_scraped_at — fast daily pass.
-    # a16z_build and yc_hiring reset careers_scraped_at for signalled companies.
-    scrape_careers(hiring_sweep=True, workers=8)
+    print("\n=== Careers (accelerator companies — overlay refresh + new discovery) ===")
+    # Known-ATS companies: cheap 1-request refresh every 3 days.
+    # NULL companies: discovered once on pickup.
+    # not_found companies: re-discovery every 75 days.
+    # Cap at 500/day so the step stays bounded; backlog drains over a few runs.
+    scrape_careers(hiring_sweep=True, workers=12, limit=500)
 
     print("\n=== Product Hunt (last 2 days) ===")
     scrape_ph(days_back=2)
 
-    print("\n=== TechCrunch (last 90 days) ===")
-    scrape_techcrunch(days_back=90)
+    print("\n=== TechCrunch (last 2 days) ===")
+    scrape_techcrunch(days_back=2)
 
     print("\n=== Standalone validation ===")
     run_validate_standalone()
@@ -84,12 +86,21 @@ def run_weekly():
     print("\n=== Techstars ===")
     scrape_techstars()
 
-    print("\n=== Careers (30-day rescrape) ===")
-    # Re-checks companies whose hiring status is >30 days stale.
-    scrape_careers(hiring_sweep=True, rescrape_after_days=30, workers=8)
+    print("\n=== EDGAR targeted (accelerator cohort, 180 days) ===")
+    # Pulls full 6-month filing history for each known-CIK company directly
+    # from the EDGAR submissions API — bypasses the broad scan's 10k pagination limit.
+    scrape_edgar_targeted(days_back=180)
+
+    print("\n=== Careers (accelerator companies — overlay refresh, no limit) ===")
+    # Weekly runs the full cohort without a cap: known-ATS companies are cheap (1 request each),
+    # not_found companies re-discover only if >75 days stale.
+    scrape_careers(hiring_sweep=True, workers=12)
 
     print("\n=== Product Hunt full backfill (90 days) ===")
     scrape_ph(days_back=90)
+
+    print("\n=== TechCrunch full backfill (90 days) ===")
+    scrape_techcrunch(days_back=90)
 
 
 SCRAPERS = {
@@ -99,7 +110,7 @@ SCRAPERS = {
     "lightspeed": scrape_lightspeed,
     "pear":      scrape_pear,
     "techstars": scrape_techstars,
-    "careers-rescrape": lambda: scrape_careers(hiring_sweep=True, rescrape_after_days=30, workers=8),
+    "careers-rescrape": lambda: scrape_careers(hiring_sweep=True, workers=12),
 }
 
 if __name__ == "__main__":
