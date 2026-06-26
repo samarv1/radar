@@ -12,6 +12,8 @@ const PAGE_SIZE = 15;
 const SIX_MONTHS_MS = 180 * 24 * 60 * 60 * 1000;
 
 function hiringStatus(c: Company): "yes" | "no" | "unknown" {
+  // not_found + valid website = we checked their site and found no careers page
+  if (c.careers_ats === "not_found" && c.website) return "no";
   const hasData = c.careers_ats && c.careers_ats !== "not_found";
   if (!hasData) return "unknown";
   const total = c.eng_count + c.gtm_count + c.product_count + c.other_count;
@@ -149,7 +151,7 @@ export function FeedClient({
   const [hiringRoleLevels, setHiringRoleLevels] = useState<string[]>([]);
   const [hiringVerticals, setHiringVerticals] = useState<string[]>([]);
   const [expandedOld, setExpandedOld] = useState(false);
-  const [tab, setTab] = useState<"raised" | "hiring">("raised");
+  const [tab, setTab] = useState<"raised" | "hiring">("hiring");
   const [view, setView] = useState<"feed" | "bookmarks">("feed");
   const [raisedPage, setRaisedPage] = useState(1);
   const [hiringPage, setHiringPage] = useState(1);
@@ -268,17 +270,6 @@ const visible = applyFilters(companies, filters);
           {/* Tab switcher */}
           <div className="flex gap-1 mb-6 border-b border-border">
             <button
-              onClick={() => setTab("raised")}
-              className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ${
-                tab === "raised"
-                  ? "border-foreground text-foreground"
-                  : "border-transparent text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              Raised
-              <span className="ml-1.5 text-xs text-muted-foreground">{visible.length}</span>
-            </button>
-            <button
               onClick={() => setTab("hiring")}
               className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ${
                 tab === "hiring"
@@ -288,6 +279,17 @@ const visible = applyFilters(companies, filters);
             >
               Actively Hiring
               <span className="ml-1.5 text-xs text-muted-foreground">{filteredHiring.length}</span>
+            </button>
+            <button
+              onClick={() => setTab("raised")}
+              className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ${
+                tab === "raised"
+                  ? "border-foreground text-foreground"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Raised
+              <span className="ml-1.5 text-xs text-muted-foreground">{visible.length}</span>
             </button>
           </div>
 

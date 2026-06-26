@@ -29,10 +29,10 @@ export type Company = {
 export async function getHiringFeed(): Promise<Company[]> {
   const { rows } = await pool.query<Company>(`
     SELECT
-      a.id, a.name, a.website, a.accelerator, a.batch,
+      a.id, a.name, COALESCE(a.website, fn_site.website) AS website, a.accelerator, a.batch,
       a.careers_ats, a.careers_url, a.created_at::text,
       a.tags,
-      NULL::float AS amount_raised,
+      COALESCE(ef_latest.amount_raised, fn_amt.amount_usd)::float AS amount_raised,
       a.round_type AS round_type,
       COALESCE(h.latest_posted_at::date::text, h.latest_first_seen_at::date::text, a.careers_scraped_at::date::text) AS date_filed,
       CASE WHEN h.latest_posted_at IS NOT NULL OR h.latest_first_seen_at IS NOT NULL THEN 'posted' ELSE 'scraped' END AS date_source,
@@ -44,6 +44,21 @@ export async function getHiringFeed(): Promise<Company[]> {
       COALESCE(h.intern, 0)::int   AS intern_count,
       COALESCE(h.new_grad, 0)::int AS new_grad_count
     FROM accelerator_companies a
+    LEFT JOIN LATERAL (
+      SELECT website FROM funding_news
+      WHERE accelerator_id = a.id AND website IS NOT NULL
+      ORDER BY published_at DESC LIMIT 1
+    ) fn_site ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT amount_raised FROM edgar_filings
+      WHERE accelerator_id = a.id
+      ORDER BY date_filed DESC LIMIT 1
+    ) ef_latest ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT amount_usd FROM funding_news
+      WHERE accelerator_id = a.id AND amount_usd IS NOT NULL
+      ORDER BY published_at DESC LIMIT 1
+    ) fn_amt ON TRUE
     JOIN (
       SELECT company_id,
         SUM(CASE WHEN category = 'engineering' THEN 1 ELSE 0 END) AS eng,
@@ -91,9 +106,9 @@ export async function getFeed(): Promise<Company[]> {
     SELECT * FROM (
       -- Accelerator-backed companies with EDGAR filings
       SELECT DISTINCT ON (a.id)
-        a.id, a.name, a.website, a.accelerator, a.batch,
+        a.id, a.name, COALESCE(a.website, fn_site.website) AS website, a.accelerator, a.batch,
         a.careers_ats, a.careers_url, a.created_at::text,
-        e.amount_raised::float AS amount_raised,
+        COALESCE(e.amount_raised, fn_round.amount_usd)::float AS amount_raised,
         COALESCE(fn_round.round_type, a.round_type) AS round_type,
         e.date_filed::text,
         'raised'::text AS date_source,
@@ -116,12 +131,18 @@ export async function getFeed(): Promise<Company[]> {
         FROM job_listings GROUP BY company_id
       ) h ON h.company_id = a.id
       LEFT JOIN LATERAL (
-        SELECT round_type FROM funding_news
+        SELECT round_type, amount_usd FROM funding_news
         WHERE accelerator_id = a.id AND round_type IS NOT NULL
         ORDER BY published_at DESC LIMIT 1
       ) fn_round ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT website FROM funding_news
+        WHERE accelerator_id = a.id AND website IS NOT NULL
+        ORDER BY published_at DESC LIMIT 1
+      ) fn_site ON TRUE
       WHERE a.is_excluded = FALSE
         AND (e.amount_raised IS NULL OR e.amount_raised <= 100000000)
+        AND e.date_filed >= NOW() - INTERVAL '180 days'
       ORDER BY a.id, e.date_filed DESC
     ) accel
 
@@ -203,6 +224,7 @@ export async function getFeed(): Promise<Company[]> {
         AND fn.company_name NOT LIKE '%:%'
         AND fn.company_name NOT LIKE '%,%'
         AND fn.company_name !~* '\y(capital|fund|venture|ventures|partner|partners|vc)\y'
+        AND fn.round_type IS NOT NULL
         AND NOT EXISTS (
           SELECT 1 FROM edgar_filings ef2
           WHERE ef2.accelerator_id IS NULL
@@ -219,7 +241,7 @@ export async function getFeed(): Promise<Company[]> {
     -- Excluded once they file Form D (they'll appear in the first branch instead).
     SELECT * FROM (
       SELECT DISTINCT ON (a.id)
-        a.id, a.name, a.website, a.accelerator, a.batch,
+        a.id, a.name, COALESCE(a.website, fn.website) AS website, a.accelerator, a.batch,
         a.careers_ats, a.careers_url, a.created_at::text,
         fn.amount_usd::float AS amount_raised,
         fn.round_type   AS round_type,
@@ -246,6 +268,7 @@ export async function getFeed(): Promise<Company[]> {
       WHERE a.is_excluded = FALSE
         AND fn.source != 'a16z_build'
         AND (fn.amount_usd IS NULL OR fn.amount_usd <= 100000000)
+        AND fn.published_at >= NOW() - INTERVAL '180 days'
         AND NOT EXISTS (
           SELECT 1 FROM edgar_filings ef WHERE ef.accelerator_id = a.id
         )

@@ -249,7 +249,7 @@ def upsert_filing(conn, filing: dict) -> bool:
 # 5. Main
 # ---------------------------------------------------------------------------
 
-def scrape(days_back: int = 90, limit: int = 2000, start_offset: int = 0):
+def scrape(days_back: int = 180, limit: int = 2000, start_offset: int = 0):
     print("Applying DB schema...")
     apply_schema()
 
@@ -330,7 +330,7 @@ def scrape(days_back: int = 90, limit: int = 2000, start_offset: int = 0):
     print(f"\nDone. inserted={inserted}, duplicates={skipped_duplicate}, excluded={skipped_excluded}, failed={failed}")
 
 
-def scrape_targeted(days_back: int = 90):
+def scrape_targeted(days_back: int = 180):
     """
     Targeted mode: for each accelerator_company with a known CIK, fetch
     their filing history from data.sec.gov and upsert any Form D filings

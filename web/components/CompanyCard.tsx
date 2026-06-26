@@ -67,11 +67,15 @@ function OpenRoles({ company }: { company: Company }) {
   }
 
   const hasData = company.careers_ats && company.careers_ats !== "not_found";
+  // not_found + website present = we actually checked their site, no careers page found
+  const checkedNoPage = company.careers_ats === "not_found" && !!company.website;
   const total = company.eng_count + company.gtm_count + company.product_count + company.other_count;
 
   let status: React.ReactNode;
   if (!hasData) {
-    status = <span className="text-muted-foreground/50">—</span>;
+    status = checkedNoPage
+      ? <span className="text-muted-foreground/50">none</span>
+      : <span className="text-muted-foreground/50">—</span>;
   } else if (total === 0) {
     status = <span className="text-muted-foreground/50">none</span>;
   } else {

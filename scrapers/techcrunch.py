@@ -79,9 +79,11 @@ class _FirstExternalLink(HTMLParser):
         super().__init__()
         self.result: str | None = None
         self.website: str | None = None
-        # Fallback: first external link whose URL is a bare homepage (path is / or empty),
-        # used when no company-name link is found (e.g. TC links descriptive text to homepage).
+        # Fallback: only the very first external link, and only when it's a bare homepage.
+        # "First" means no prior external link was seen — guards against picking up
+        # community/social links (e.g. reddit.com) that appear mid-article.
         self.homepage_fallback: str | None = None
+        self._first_external_seen: bool = False
         self._href: str | None = None
         self._text: list[str] = []
 
@@ -95,12 +97,13 @@ class _FirstExternalLink(HTMLParser):
             ):
                 self._href = href
                 self._text = []
-                # Track bare homepage URLs as a fallback
-                if self.homepage_fallback is None:
+                # Only treat as fallback if this is the very first external link seen.
+                if not self._first_external_seen and self.homepage_fallback is None:
                     from urllib.parse import urlparse
                     path = urlparse(href).path
                     if not path or path == "/":
                         self.homepage_fallback = href
+                self._first_external_seen = True
 
     def handle_data(self, data: str) -> None:
         if self._href is not None:
@@ -391,6 +394,7 @@ def backfill_tc_websites():
                     ORDER BY accelerator_id, published_at DESC
                 ) fn
                 WHERE a.id = fn.accelerator_id
+                  AND a.website IS NULL
                   AND a.website IS DISTINCT FROM fn.website
                 RETURNING a.name, fn.website, fn.company_name
             """)
