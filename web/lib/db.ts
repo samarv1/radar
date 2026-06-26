@@ -78,7 +78,11 @@ export async function getHiringFeed(): Promise<Company[]> {
         COALESCE(ef_latest.amount_raised, fn_amt.amount_usd)::float AS amount_raised,
         a.round_type AS round_type,
         COALESCE(h.latest_posted_at::date::text, h.latest_first_seen_at::date::text, a.careers_scraped_at::date::text) AS date_filed,
-        CASE WHEN h.latest_posted_at IS NOT NULL OR h.latest_first_seen_at IS NOT NULL THEN 'posted' ELSE 'scraped' END AS date_source,
+        CASE
+          WHEN h.latest_posted_at IS NOT NULL THEN 'posted'
+          WHEN h.latest_first_seen_at IS NOT NULL THEN 'discovered'
+          ELSE 'scraped'
+        END AS date_source,
         FALSE AS has_edgar,
         COALESCE(h.eng, 0)::int      AS eng_count,
         COALESCE(h.product, 0)::int  AS product_count,
@@ -132,11 +136,9 @@ export async function getHiringFeed(): Promise<Company[]> {
           OR a.accelerator IN ('pear', 'lightspeed')
         )
       ORDER BY COALESCE(am.norm_site, a.id::text),
-               h.latest_posted_at DESC NULLS LAST,
-               h.latest_first_seen_at DESC NULLS LAST,
-               h.latest_scraped_at DESC
+               COALESCE(h.latest_posted_at, h.latest_first_seen_at, h.latest_scraped_at) DESC NULLS LAST
     ) deduped
-    ORDER BY latest_posted_at DESC NULLS LAST, latest_first_seen_at DESC NULLS LAST, latest_scraped_at DESC
+    ORDER BY COALESCE(latest_posted_at, latest_first_seen_at, latest_scraped_at) DESC NULLS LAST
   `);
   return rows;
 }
@@ -201,8 +203,8 @@ export async function getFeed(): Promise<Company[]> {
         ef.standalone_source AS accelerator,
         ARRAY[ef.standalone_source]::text[] AS accelerators,
         NULL::text    AS batch,
-        NULL::text    AS careers_ats,
-        NULL::text    AS careers_url,
+        cc.careers_ats AS careers_ats,
+        cc.careers_url AS careers_url,
         ef.created_at::text,
         NULL::text    AS company_status,
         ef.amount_raised::float AS amount_raised,
@@ -228,6 +230,7 @@ export async function getFeed(): Promise<Company[]> {
         WHERE LOWER(TRIM(product_name)) = LOWER(TRIM(ef.company_name))
         ORDER BY created_at DESC LIMIT 1
       ) ph ON TRUE
+      LEFT JOIN company_careers cc ON cc.website = COALESCE(fn.website, ph.website)
       WHERE ef.accelerator_id IS NULL
         AND ef.standalone_source IS NOT NULL
       ORDER BY ef.company_name, ef.date_filed DESC
@@ -247,8 +250,8 @@ export async function getFeed(): Promise<Company[]> {
         'techcrunch'::text AS accelerator,
         ARRAY['techcrunch']::text[] AS accelerators,
         NULL::text      AS batch,
-        NULL::text      AS careers_ats,
-        NULL::text      AS careers_url,
+        cc.careers_ats  AS careers_ats,
+        cc.careers_url  AS careers_url,
         fn.created_at::text,
         NULL::text      AS company_status,
         fn.amount_usd::float AS amount_raised,
@@ -264,6 +267,7 @@ export async function getFeed(): Promise<Company[]> {
         0::int AS new_grad_count,
         NULL::text[] AS tags
       FROM funding_news fn
+      LEFT JOIN company_careers cc ON cc.website = fn.website
       WHERE fn.accelerator_id IS NULL
         AND fn.amount_usd IS NOT NULL
         AND array_length(regexp_split_to_array(trim(fn.company_name), '\s+'), 1) <= 3

@@ -113,12 +113,12 @@ function byDateDesc(a: Company, b: Company) {
 }
 
 function byHiringDate(a: Company, b: Company) {
-  const aPosted = a.date_source === "posted";
-  const bPosted = b.date_source === "posted";
-  if (aPosted !== bPosted) return aPosted ? -1 : 1;
   const ta = a.date_filed ? new Date(a.date_filed).getTime() : 0;
   const tb = b.date_filed ? new Date(b.date_filed).getTime() : 0;
-  return tb - ta;
+  if (tb !== ta) return tb - ta;
+  const aPosted = a.date_source === "posted";
+  const bPosted = b.date_source === "posted";
+  return aPosted === bPosted ? 0 : aPosted ? -1 : 1;
 }
 
 function Pagination({
