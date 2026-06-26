@@ -7,6 +7,7 @@ export type Company = {
   name: string;
   website: string | null;
   accelerator: string;
+  accelerators: string[];
   batch: string | null;
   careers_ats: string | null;
   careers_url: string | null;
@@ -15,6 +16,7 @@ export type Company = {
   date_filed: string;
   date_source?: string;
   created_at: string;
+  company_status: string | null;
   has_edgar: boolean;
   eng_count: number;
   product_count: number;
@@ -28,122 +30,167 @@ export type Company = {
 
 export async function getHiringFeed(): Promise<Company[]> {
   const { rows } = await pool.query<Company>(`
-    SELECT
-      a.id, a.name, COALESCE(a.website, fn_site.website) AS website, a.accelerator, a.batch,
-      a.careers_ats, a.careers_url, a.created_at::text,
-      a.tags,
-      COALESCE(ef_latest.amount_raised, fn_amt.amount_usd)::float AS amount_raised,
-      a.round_type AS round_type,
-      COALESCE(h.latest_posted_at::date::text, h.latest_first_seen_at::date::text, a.careers_scraped_at::date::text) AS date_filed,
-      CASE WHEN h.latest_posted_at IS NOT NULL OR h.latest_first_seen_at IS NOT NULL THEN 'posted' ELSE 'scraped' END AS date_source,
-      FALSE AS has_edgar,
-      COALESCE(h.eng, 0)::int      AS eng_count,
-      COALESCE(h.product, 0)::int  AS product_count,
-      COALESCE(h.gtm, 0)::int      AS gtm_count,
-      COALESCE(h.other, 0)::int    AS other_count,
-      COALESCE(h.intern, 0)::int   AS intern_count,
-      COALESCE(h.new_grad, 0)::int AS new_grad_count
-    FROM accelerator_companies a
-    LEFT JOIN LATERAL (
-      SELECT website FROM funding_news
-      WHERE accelerator_id = a.id AND website IS NOT NULL
-      ORDER BY published_at DESC LIMIT 1
-    ) fn_site ON TRUE
-    LEFT JOIN LATERAL (
-      SELECT amount_raised FROM edgar_filings
-      WHERE accelerator_id = a.id
-      ORDER BY date_filed DESC LIMIT 1
-    ) ef_latest ON TRUE
-    LEFT JOIN LATERAL (
-      SELECT amount_usd FROM funding_news
-      WHERE accelerator_id = a.id AND amount_usd IS NOT NULL
-      ORDER BY published_at DESC LIMIT 1
-    ) fn_amt ON TRUE
-    JOIN (
-      SELECT company_id,
-        SUM(CASE WHEN category = 'engineering' THEN 1 ELSE 0 END) AS eng,
-        SUM(CASE WHEN category = 'product'     THEN 1 ELSE 0 END) AS product,
-        SUM(CASE WHEN category = 'gtm'         THEN 1 ELSE 0 END) AS gtm,
-        SUM(CASE WHEN category = 'other'       THEN 1 ELSE 0 END) AS other,
-        SUM(CASE WHEN category = 'intern'      THEN 1 ELSE 0 END) AS intern,
-        SUM(CASE WHEN category = 'new_grad'    THEN 1 ELSE 0 END) AS new_grad,
-        MAX(posted_at)      AS latest_posted_at,
-        MAX(first_seen_at)  AS latest_first_seen_at,
-        MAX(scraped_at)     AS latest_scraped_at
-      FROM job_listings GROUP BY company_id
-    ) h ON h.company_id = a.id
-    WHERE a.is_excluded = FALSE
-      AND (h.eng + h.product + h.gtm + h.other + h.intern + h.new_grad) > 0
-      AND COALESCE(h.latest_posted_at, h.latest_first_seen_at, h.latest_scraped_at) >= NOW() - INTERVAL '90 days'
-      -- Not already in the Raised feed (no EDGAR filing in last 90 days)
-      AND NOT EXISTS (
-        SELECT 1 FROM edgar_filings ef
-        WHERE ef.accelerator_id = a.id
-          AND ef.date_filed >= NOW() - INTERVAL '90 days'
-      )
-      -- Exclude known large raises
-      AND NOT EXISTS (
-        SELECT 1 FROM edgar_filings ef
-        WHERE ef.accelerator_id = a.id
-          AND ef.amount_raised > 100000000
-      )
-      AND (
-        a.accelerator IN ('yc', 'techstars')
-        OR (a.accelerator = 'a16z'
-            AND (a.stage IS NULL
-                 OR (a.stage NOT ILIKE '%growth%' AND a.stage NOT ILIKE '%exit%')))
-        OR (a.accelerator = 'sequoia'
-            AND (a.stage IS NULL OR a.stage IN ('Pre-Seed/Seed', 'Early')))
-        OR a.accelerator IN ('pear', 'lightspeed')
-      )
-    ORDER BY h.latest_posted_at DESC NULLS LAST, h.latest_first_seen_at DESC NULLS LAST, h.latest_scraped_at DESC
+    WITH accel_meta AS (
+      -- Group accelerator_companies by normalized website to detect duplicates.
+      -- Aggregates all accelerators into an array and surfaces the worst company_status
+      -- so that a company marked Public/Acquired in any portfolio is excluded everywhere.
+      SELECT
+        regexp_replace(lower(website), '^https?://(www\\.)?|/+$', '', 'g') AS norm_site,
+        array_agg(DISTINCT accelerator ORDER BY accelerator) AS accelerators,
+        MAX(CASE WHEN company_status IS NOT NULL AND company_status != 'Active'
+            THEN company_status END) AS worst_status
+      FROM accelerator_companies
+      WHERE website IS NOT NULL AND length(website) > 8
+      GROUP BY 1
+    )
+    SELECT * FROM (
+      SELECT DISTINCT ON (COALESCE(am.norm_site, a.id::text))
+        a.id, a.name, COALESCE(a.website, fn_site.website) AS website,
+        a.accelerator,
+        COALESCE(am.accelerators, ARRAY[a.accelerator]) AS accelerators,
+        a.batch, a.careers_ats, a.careers_url, a.created_at::text,
+        a.tags, a.company_status,
+        COALESCE(ef_latest.amount_raised, fn_amt.amount_usd)::float AS amount_raised,
+        a.round_type AS round_type,
+        COALESCE(h.latest_posted_at::date::text, h.latest_first_seen_at::date::text, a.careers_scraped_at::date::text) AS date_filed,
+        CASE WHEN h.latest_posted_at IS NOT NULL OR h.latest_first_seen_at IS NOT NULL THEN 'posted' ELSE 'scraped' END AS date_source,
+        FALSE AS has_edgar,
+        COALESCE(h.eng, 0)::int      AS eng_count,
+        COALESCE(h.product, 0)::int  AS product_count,
+        COALESCE(h.gtm, 0)::int      AS gtm_count,
+        COALESCE(h.other, 0)::int    AS other_count,
+        COALESCE(h.intern, 0)::int   AS intern_count,
+        COALESCE(h.new_grad, 0)::int AS new_grad_count,
+        h.latest_posted_at, h.latest_first_seen_at, h.latest_scraped_at
+      FROM accelerator_companies a
+      LEFT JOIN accel_meta am
+        ON regexp_replace(lower(a.website), '^https?://(www\\.)?|/+$', '', 'g') = am.norm_site
+      LEFT JOIN LATERAL (
+        SELECT website FROM funding_news
+        WHERE accelerator_id = a.id AND website IS NOT NULL
+        ORDER BY published_at DESC LIMIT 1
+      ) fn_site ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT amount_raised FROM edgar_filings
+        WHERE accelerator_id = a.id
+        ORDER BY date_filed DESC LIMIT 1
+      ) ef_latest ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT amount_usd FROM funding_news
+        WHERE accelerator_id = a.id AND amount_usd IS NOT NULL
+        ORDER BY published_at DESC LIMIT 1
+      ) fn_amt ON TRUE
+      JOIN (
+        SELECT company_id,
+          SUM(CASE WHEN category = 'engineering' THEN 1 ELSE 0 END) AS eng,
+          SUM(CASE WHEN category = 'product'     THEN 1 ELSE 0 END) AS product,
+          SUM(CASE WHEN category = 'gtm'         THEN 1 ELSE 0 END) AS gtm,
+          SUM(CASE WHEN category = 'other'       THEN 1 ELSE 0 END) AS other,
+          SUM(CASE WHEN category = 'intern'      THEN 1 ELSE 0 END) AS intern,
+          SUM(CASE WHEN category = 'new_grad'    THEN 1 ELSE 0 END) AS new_grad,
+          MAX(posted_at)      AS latest_posted_at,
+          MAX(first_seen_at)  AS latest_first_seen_at,
+          MAX(scraped_at)     AS latest_scraped_at
+        FROM job_listings GROUP BY company_id
+      ) h ON h.company_id = a.id
+      WHERE a.is_excluded = FALSE
+        AND (
+          -- Companies with confirmed open roles scraped in the last 90 days
+          (COALESCE(h.eng, 0) + COALESCE(h.product, 0) + COALESCE(h.gtm, 0) + COALESCE(h.other, 0) + COALESCE(h.intern, 0) + COALESCE(h.new_grad, 0)) > 0
+          AND COALESCE(h.latest_posted_at, h.latest_first_seen_at, h.latest_scraped_at) >= NOW() - INTERVAL '90 days'
+          -- TODO: also surface yc_is_hiring=true companies once we track yc_is_hiring_since
+          -- so we can apply a matching 90-day recency gate on the hiring signal itself.
+          -- OR (a.yc_is_hiring = TRUE AND a.yc_is_hiring_since >= NOW() - INTERVAL '90 days')
+        )
+        AND (
+          -- companies with a website group: exclude if any entry has a bad status
+          (am.norm_site IS NOT NULL AND am.worst_status IS NULL)
+          OR
+          -- companies without a website (no group): check individual status
+          (am.norm_site IS NULL AND (a.company_status IS NULL OR a.company_status = 'Active'))
+        )
+        AND (
+          a.accelerator IN ('yc', 'techstars')
+          OR (a.accelerator = 'a16z'
+              AND (a.stage IS NULL
+                   OR (a.stage NOT ILIKE '%growth%' AND a.stage NOT ILIKE '%exit%')))
+          OR (a.accelerator = 'sequoia'
+              AND (a.stage IS NULL OR a.stage IN ('Pre-Seed/Seed', 'Early')))
+          OR a.accelerator IN ('pear', 'lightspeed')
+        )
+      ORDER BY COALESCE(am.norm_site, a.id::text),
+               h.latest_posted_at DESC NULLS LAST,
+               h.latest_first_seen_at DESC NULLS LAST,
+               h.latest_scraped_at DESC
+    ) deduped
+    ORDER BY latest_posted_at DESC NULLS LAST, latest_first_seen_at DESC NULLS LAST, latest_scraped_at DESC
   `);
   return rows;
 }
 
 export async function getFeed(): Promise<Company[]> {
   const { rows } = await pool.query<Company>(`
+    WITH accel_meta AS (
+      SELECT
+        regexp_replace(lower(website), '^https?://(www\\.)?|/+$', '', 'g') AS norm_site,
+        array_agg(DISTINCT accelerator ORDER BY accelerator) AS accelerators,
+        MAX(CASE WHEN company_status IS NOT NULL AND company_status != 'Active'
+            THEN company_status END) AS worst_status
+      FROM accelerator_companies
+      WHERE website IS NOT NULL AND length(website) > 8
+      GROUP BY 1
+    )
     SELECT * FROM (
-      -- Accelerator-backed companies with EDGAR filings
-      SELECT DISTINCT ON (a.id)
-        a.id, a.name, COALESCE(a.website, fn_site.website) AS website, a.accelerator, a.batch,
-        a.careers_ats, a.careers_url, a.created_at::text,
-        COALESCE(e.amount_raised, fn_round.amount_usd)::float AS amount_raised,
-        COALESCE(fn_round.round_type, a.round_type) AS round_type,
-        e.date_filed::text,
-        'raised'::text AS date_source,
-        TRUE AS has_edgar,
-        COALESCE(h.eng, 0)::int     AS eng_count,
-        COALESCE(h.product, 0)::int AS product_count,
-        COALESCE(h.gtm, 0)::int     AS gtm_count,
-        COALESCE(h.other, 0)::int   AS other_count,
-        0::int AS intern_count,
-        0::int AS new_grad_count,
-        a.tags
-      FROM accelerator_companies a
-      JOIN edgar_filings e ON e.accelerator_id = a.id
-      LEFT JOIN (
-        SELECT company_id,
-          SUM(CASE WHEN category = 'engineering' THEN 1 ELSE 0 END) AS eng,
-          SUM(CASE WHEN category = 'product'     THEN 1 ELSE 0 END) AS product,
-          SUM(CASE WHEN category = 'gtm'         THEN 1 ELSE 0 END) AS gtm,
-          SUM(CASE WHEN category = 'other'       THEN 1 ELSE 0 END) AS other
-        FROM job_listings GROUP BY company_id
-      ) h ON h.company_id = a.id
-      LEFT JOIN LATERAL (
-        SELECT round_type, amount_usd FROM funding_news
-        WHERE accelerator_id = a.id AND round_type IS NOT NULL
-        ORDER BY published_at DESC LIMIT 1
-      ) fn_round ON TRUE
-      LEFT JOIN LATERAL (
-        SELECT website FROM funding_news
-        WHERE accelerator_id = a.id AND website IS NOT NULL
-        ORDER BY published_at DESC LIMIT 1
-      ) fn_site ON TRUE
-      WHERE a.is_excluded = FALSE
-        AND (e.amount_raised IS NULL OR e.amount_raised <= 100000000)
-        AND e.date_filed >= NOW() - INTERVAL '180 days'
-      ORDER BY a.id, e.date_filed DESC
+      -- Accelerator-backed companies with EDGAR filings (deduped by website)
+      SELECT * FROM (
+        SELECT DISTINCT ON (COALESCE(am.norm_site, a.id::text))
+          a.id, a.name, COALESCE(a.website, fn_site.website) AS website,
+          a.accelerator,
+          COALESCE(am.accelerators, ARRAY[a.accelerator]) AS accelerators,
+          a.batch, a.careers_ats, a.careers_url, a.created_at::text,
+          a.company_status,
+          COALESCE(e.amount_raised, fn_round.amount_usd)::float AS amount_raised,
+          COALESCE(fn_round.round_type, a.round_type) AS round_type,
+          e.date_filed::text,
+          'raised'::text AS date_source,
+          TRUE AS has_edgar,
+          COALESCE(h.eng, 0)::int     AS eng_count,
+          COALESCE(h.product, 0)::int AS product_count,
+          COALESCE(h.gtm, 0)::int     AS gtm_count,
+          COALESCE(h.other, 0)::int   AS other_count,
+          0::int AS intern_count,
+          0::int AS new_grad_count,
+          a.tags
+        FROM accelerator_companies a
+        JOIN edgar_filings e ON e.accelerator_id = a.id
+        LEFT JOIN accel_meta am
+          ON regexp_replace(lower(a.website), '^https?://(www\\.)?|/+$', '', 'g') = am.norm_site
+        LEFT JOIN (
+          SELECT company_id,
+            SUM(CASE WHEN category = 'engineering' THEN 1 ELSE 0 END) AS eng,
+            SUM(CASE WHEN category = 'product'     THEN 1 ELSE 0 END) AS product,
+            SUM(CASE WHEN category = 'gtm'         THEN 1 ELSE 0 END) AS gtm,
+            SUM(CASE WHEN category = 'other'       THEN 1 ELSE 0 END) AS other
+          FROM job_listings GROUP BY company_id
+        ) h ON h.company_id = a.id
+        LEFT JOIN LATERAL (
+          SELECT round_type, amount_usd FROM funding_news
+          WHERE accelerator_id = a.id AND round_type IS NOT NULL
+          ORDER BY published_at DESC LIMIT 1
+        ) fn_round ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT website FROM funding_news
+          WHERE accelerator_id = a.id AND website IS NOT NULL
+          ORDER BY published_at DESC LIMIT 1
+        ) fn_site ON TRUE
+        WHERE a.is_excluded = FALSE
+          AND e.date_filed >= NOW() - INTERVAL '180 days'
+          AND (
+            (am.norm_site IS NOT NULL AND am.worst_status IS NULL)
+            OR (am.norm_site IS NULL AND (a.company_status IS NULL OR a.company_status = 'Active'))
+          )
+        ORDER BY COALESCE(am.norm_site, a.id::text), e.date_filed DESC
+      ) accel_inner
     ) accel
 
     UNION ALL
@@ -155,10 +202,12 @@ export async function getFeed(): Promise<Company[]> {
         ef.company_name AS name,
         COALESCE(fn.website, ph.website) AS website,
         ef.standalone_source AS accelerator,
+        ARRAY[ef.standalone_source]::text[] AS accelerators,
         NULL::text    AS batch,
         NULL::text    AS careers_ats,
         NULL::text    AS careers_url,
         ef.created_at::text,
+        NULL::text    AS company_status,
         ef.amount_raised::float AS amount_raised,
         fn.round_type AS round_type,
         ef.date_filed::text,
@@ -184,7 +233,6 @@ export async function getFeed(): Promise<Company[]> {
       ) ph ON TRUE
       WHERE ef.accelerator_id IS NULL
         AND ef.standalone_source IS NOT NULL
-        AND (ef.amount_raised IS NULL OR ef.amount_raised <= 100000000)
       ORDER BY ef.company_name, ef.date_filed DESC
     ) standalone
 
@@ -200,10 +248,12 @@ export async function getFeed(): Promise<Company[]> {
         fn.company_name AS name,
         fn.website      AS website,
         'techcrunch'::text AS accelerator,
+        ARRAY['techcrunch']::text[] AS accelerators,
         NULL::text      AS batch,
         NULL::text      AS careers_ats,
         NULL::text      AS careers_url,
         fn.created_at::text,
+        NULL::text      AS company_status,
         fn.amount_usd::float AS amount_raised,
         fn.round_type   AS round_type,
         fn.published_at::date::text AS date_filed,
@@ -219,7 +269,6 @@ export async function getFeed(): Promise<Company[]> {
       FROM funding_news fn
       WHERE fn.accelerator_id IS NULL
         AND fn.amount_usd IS NOT NULL
-        AND fn.amount_usd <= 100000000
         AND array_length(regexp_split_to_array(trim(fn.company_name), '\s+'), 1) <= 3
         AND fn.company_name NOT LIKE '%:%'
         AND fn.company_name NOT LIKE '%,%'
@@ -241,8 +290,10 @@ export async function getFeed(): Promise<Company[]> {
     -- Excluded once they file Form D (they'll appear in the first branch instead).
     SELECT * FROM (
       SELECT DISTINCT ON (a.id)
-        a.id, a.name, COALESCE(a.website, fn.website) AS website, a.accelerator, a.batch,
-        a.careers_ats, a.careers_url, a.created_at::text,
+        a.id, a.name, COALESCE(a.website, fn.website) AS website, a.accelerator,
+        ARRAY[a.accelerator]::text[] AS accelerators,
+        a.batch, a.careers_ats, a.careers_url, a.created_at::text,
+        a.company_status,
         fn.amount_usd::float AS amount_raised,
         fn.round_type   AS round_type,
         fn.published_at::date::text AS date_filed,
@@ -267,7 +318,6 @@ export async function getFeed(): Promise<Company[]> {
       ) h ON h.company_id = a.id
       WHERE a.is_excluded = FALSE
         AND fn.source != 'a16z_build'
-        AND (fn.amount_usd IS NULL OR fn.amount_usd <= 100000000)
         AND fn.published_at >= NOW() - INTERVAL '180 days'
         AND NOT EXISTS (
           SELECT 1 FROM edgar_filings ef WHERE ef.accelerator_id = a.id

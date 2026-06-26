@@ -12,8 +12,6 @@ const PAGE_SIZE = 15;
 const SIX_MONTHS_MS = 180 * 24 * 60 * 60 * 1000;
 
 function hiringStatus(c: Company): "yes" | "no" | "unknown" {
-  // not_found + valid website = we checked their site and found no careers page
-  if (c.careers_ats === "not_found" && c.website) return "no";
   const hasData = c.careers_ats && c.careers_ats !== "not_found";
   if (!hasData) return "unknown";
   const total = c.eng_count + c.gtm_count + c.product_count + c.other_count;
@@ -38,8 +36,9 @@ function matchesVertical(tags: string[] | null, verticals: string[]): boolean {
 function applyFilters(companies: Company[], f: Filters): Company[] {
   return companies.filter((c) => {
     if (f.accelerators.length > 0) {
-      const isKnown = KNOWN_ACCELERATORS.includes(c.accelerator);
-      const matchesAccel = f.accelerators.includes(c.accelerator);
+      const accels = c.accelerators ?? [c.accelerator];
+      const isKnown = accels.some(a => KNOWN_ACCELERATORS.includes(a));
+      const matchesAccel = accels.some(a => f.accelerators.includes(a));
       const matchesUnknown = f.accelerators.includes("unknown") && !isKnown;
       if (!matchesAccel && !matchesUnknown) return false;
     }
@@ -52,7 +51,12 @@ function applyFilters(companies: Company[], f: Filters): Company[] {
     }
 
     if (f.amounts.length > 0) {
-      if (c.amount_raised === null || c.amount_raised > Math.max(...f.amounts)) return false;
+      const amt = c.amount_raised;
+      const passes = f.amounts.some(threshold => {
+        if (threshold === 0) return amt === null || amt < 1_000_000;
+        return amt !== null && amt >= threshold;
+      });
+      if (!passes) return false;
     }
 
     if (f.verticals.length > 0 && !matchesVertical(c.tags, f.verticals)) return false;
@@ -65,7 +69,10 @@ function applyFilters(companies: Company[], f: Filters): Company[] {
 
 function applyHiringFilters(companies: Company[], accelerators: string[], roleTypes: string[], roleLevels: string[], verticals: string[]): Company[] {
   return companies.filter((c) => {
-    if (accelerators.length > 0 && !accelerators.includes(c.accelerator)) return false;
+    if (accelerators.length > 0) {
+      const accels = c.accelerators ?? [c.accelerator];
+      if (!accels.some(a => accelerators.includes(a))) return false;
+    }
     if (verticals.length > 0 && !matchesVertical(c.tags, verticals)) return false;
     if (roleTypes.length > 0) {
       const hasType = roleTypes.some((r) => {

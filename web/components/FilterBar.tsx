@@ -28,7 +28,9 @@ export function normalizeRoundType(rt: string | null): string {
   if (s.includes("pre") || s === "seed") return "seed";
   if (s.includes("series a")) return "series_a";
   if (s.includes("series b")) return "series_b";
-  if (s.includes("series c") || s.includes("series d") || s.includes("series e")) return "series_c";
+  if (s.includes("series c")) return "series_c";
+  if (s.includes("series d")) return "series_d";
+  if (s.includes("series e") || s.includes("series f") || s.includes("series g")) return "series_e";
   return "unknown";
 }
 
@@ -36,7 +38,9 @@ const ROUND_OPTIONS: [string, string][] = [
   ["seed", "Seed / Pre-Seed"],
   ["series_a", "Series A"],
   ["series_b", "Series B"],
-  ["series_c", "Series C+"],
+  ["series_c", "Series C"],
+  ["series_d", "Series D"],
+  ["series_e", "Series E+"],
   ["unknown", "Unknown"],
 ];
 
@@ -262,7 +266,7 @@ export function FilterBar({ filters, onChange }: Props) {
 
       <FilterDropdown label="Filed within" activeCount={filters.days.length}>
         <NumberCheckboxList
-          options={[[30, "30d"], [60, "60d"], [90, "90d"]]}
+          options={[[30, "30d"], [60, "60d"], [90, "90d"], [180, "180d"]]}
           values={filters.days}
           onChange={(v) => onChange({ ...filters, days: v })}
         />
@@ -271,9 +275,11 @@ export function FilterBar({ filters, onChange }: Props) {
       <FilterDropdown label="Amount raised" activeCount={filters.amounts.length}>
         <NumberCheckboxList
           options={[
-            [1_000_000, "<$1M"],
-            [10_000_000, "<$10M"],
-            [100_000_000, "<$100M"],
+            [0, "< $1M"],
+            [1_000_000, "$1M+"],
+            [5_000_000, "$5M+"],
+            [10_000_000, "$10M+"],
+            [50_000_000, "$50M+"],
           ]}
           values={filters.amounts}
           onChange={(v) => onChange({ ...filters, amounts: v })}
