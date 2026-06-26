@@ -207,6 +207,8 @@ def parse_company(title: str) -> str | None:
     if len(parts) < 2:
         return None
     name = parts[0].strip().strip("'\"").strip()
+    # Strip leading dollar amounts: "$2.5B Cerebras raises..." → "Cerebras"
+    name = re.sub(r"^\$[\d.,]+\s*[BMKbmk]?\s+", "", name).strip()
     # Strip descriptor prefixes in two passes:
     # Pass 1 — comma/colon split: "Riding GLP-1 boom, VITL" → "VITL"
     #   "After pivoting, Y Combinator grad Glimpse" → "Y Combinator grad Glimpse"

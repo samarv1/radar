@@ -153,16 +153,22 @@ def _board_url(ats: str, slug: str) -> str:
     return ""
 
 
-def discover_ats(website: str) -> tuple[str, str, str] | None:
-    """Return (ats_name, slug, board_url) by following links from company's own website.
+def discover_ats(website: str) -> tuple[str | None, str | None, str | None]:
+    """Return (ats_name, slug, url) by following links from company's own website.
 
-    Tries common careers paths, follows redirects, then scans the final URL and
-    page HTML for known ATS domain patterns. No slug guessing — the slug comes
-    directly from the company's own redirect chain or embedded link.
+    When a recognized ATS is found: all three values are set.
+    When a careers page is found but ATS is unrecognized: ats_name and slug are None,
+    url is the careers page URL (so we can still surface a link to the user).
+    When nothing is found: all three are None.
+
+    No slug guessing — the slug comes directly from the company's own redirect
+    chain or embedded link.
     """
     base = website.rstrip("/")
     if not base.startswith("http"):
         base = "https://" + base
+
+    fallback_url: str | None = None
 
     for path in _CAREERS_PATHS:
         try:
@@ -181,9 +187,12 @@ def discover_ats(website: str) -> tuple[str, str, str] | None:
                     if m:
                         slug = m.group(1).strip("/")
                         return ats, slug, _board_url(ats, slug)
+                # Keep the first valid careers URL as fallback
+                if fallback_url is None and not _is_media_domain(r.url):
+                    fallback_url = r.url
         except Exception:
             pass
-    return None
+    return None, None, fallback_url
 
 
 # --- ATS fetchers ---
@@ -425,14 +434,28 @@ def get_pending_companies(
             ORDER BY a.id
         """
     else:
+        # Cover all accelerator companies that could appear in the raised feed:
+        # those with any EDGAR filing ≤ $100M OR recent funding news (last 180 days).
+        # This replaces the old JOIN on edgar_filings so accelerator-announced
+        # companies (no Form D yet) are also scraped.
         sql = f"""
             SELECT DISTINCT a.id, a.name, a.website, a.careers_ats, a.careers_url
             FROM accelerator_companies a
-            JOIN edgar_filings e ON e.accelerator_id = a.id
             WHERE a.is_excluded = FALSE
-              AND (e.amount_raised IS NULL OR e.amount_raised <= 100000000)
               {staleness}
               {accel_filter}
+              AND (
+                EXISTS (
+                    SELECT 1 FROM edgar_filings e
+                    WHERE e.accelerator_id = a.id
+                      AND (e.amount_raised IS NULL OR e.amount_raised <= 100000000)
+                )
+                OR EXISTS (
+                    SELECT 1 FROM funding_news fn
+                    WHERE fn.accelerator_id = a.id
+                      AND fn.published_at >= NOW() - INTERVAL '180 days'
+                )
+              )
             ORDER BY a.id
         """
     with conn.cursor() as cur:
@@ -504,6 +527,152 @@ def update_careers_status(conn, company_id: int, ats: str, url: str | None):
         """, (ats, url, company_id))
 
 
+def get_pending_standalone_websites(
+    conn,
+    rediscover_after_days: int | None = 21,
+) -> list[dict]:
+    """Return TC/standalone company websites that need careers scraping.
+
+    Covers the two non-accelerator branches of the raised feed:
+      - TC-only announced (funding_news with no accelerator_id)
+      - Standalone EDGAR companies validated by TC/PH (edgar_filings.standalone_source IS NOT NULL)
+    Results are stored in company_careers keyed by website.
+    """
+    staleness_parts = ["cc.website IS NULL"]
+    if rediscover_after_days is not None:
+        staleness_parts.append(
+            f"cc.careers_scraped_at < NOW() - INTERVAL '{rediscover_after_days} days'"
+        )
+    staleness = " OR ".join(staleness_parts)
+
+    sql = f"""
+        WITH combined AS (
+            -- TC-only announced companies
+            SELECT fn.website, fn.company_name AS name
+            FROM funding_news fn
+            WHERE fn.accelerator_id IS NULL
+              AND fn.website IS NOT NULL
+              AND fn.amount_usd IS NOT NULL
+              AND fn.round_type IS NOT NULL
+
+            UNION
+
+            -- Standalone EDGAR companies (website from funding_news or PH match)
+            SELECT COALESCE(fn2.website, ph.website), ef.company_name
+            FROM edgar_filings ef
+            LEFT JOIN LATERAL (
+                SELECT website FROM funding_news
+                WHERE LOWER(TRIM(company_name)) = LOWER(TRIM(ef.company_name))
+                ORDER BY created_at DESC LIMIT 1
+            ) fn2 ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT website FROM ph_launches
+                WHERE LOWER(TRIM(product_name)) = LOWER(TRIM(ef.company_name))
+                ORDER BY created_at DESC LIMIT 1
+            ) ph ON TRUE
+            WHERE ef.accelerator_id IS NULL
+              AND ef.standalone_source IS NOT NULL
+              AND COALESCE(fn2.website, ph.website) IS NOT NULL
+        )
+        SELECT DISTINCT ON (c.website)
+          c.website, c.name, cc.careers_ats, cc.careers_url
+        FROM combined c
+        LEFT JOIN company_careers cc ON cc.website = c.website
+        WHERE ({staleness})
+        ORDER BY c.website
+    """
+    with conn.cursor() as cur:
+        cur.execute(sql)
+        return [
+            {"website": r[0], "name": r[1], "careers_ats": r[2], "careers_url": r[3]}
+            for r in cur.fetchall()
+        ]
+
+
+def update_standalone_careers(conn, website: str, ats: str | None, url: str | None):
+    with conn.cursor() as cur:
+        cur.execute("""
+            INSERT INTO company_careers (website, careers_ats, careers_url, careers_scraped_at)
+            VALUES (%s, %s, %s, NOW())
+            ON CONFLICT (website) DO UPDATE SET
+                careers_ats = EXCLUDED.careers_ats,
+                careers_url = EXCLUDED.careers_url,
+                careers_scraped_at = NOW()
+        """, (website, ats, url))
+
+
+def _scrape_standalone_one(company: dict, total: int, idx: int) -> bool:
+    """Scrape careers for a TC/standalone company. Saves to company_careers."""
+    name = company["name"]
+    website = company["website"]
+    known_ats = company.get("careers_ats")
+    known_url = company.get("careers_url")
+
+    matched_ats = None
+    matched_jobs = []
+    matched_url = None
+    fallback_careers_url = None
+
+    valid_website = (
+        bool(website)
+        and _is_likely_homepage(website)
+        and not _is_media_domain(website)
+    )
+
+    # Fast-path: ATS already known from a previous scrape.
+    if known_ats in _REAL_ATS and known_url:
+        slug = _slug_from_url(known_ats, known_url)
+        if slug:
+            result = _ATS_FETCHERS[known_ats](slug)
+            if result is not None:
+                matched_jobs, matched_url = result
+                matched_ats = known_ats
+
+    if matched_ats is None:
+        if valid_website:
+            ats_name, slug, url = discover_ats(website)
+            if ats_name:
+                fetcher = _ATS_FETCHERS.get(ats_name)
+                if fetcher:
+                    result = fetcher(slug)
+                    if result is not None:
+                        matched_jobs, matched_url = result
+                        matched_ats = ats_name
+                    else:
+                        matched_ats = ats_name
+                        matched_url = url
+            elif url:
+                fallback_careers_url = url
+        elif website:
+            with _print_lock:
+                print(f"[{idx}/{total}] {name} (standalone) → skipped bad URL: {website}")
+
+    conn = get_connection()
+    try:
+        if matched_ats:
+            update_standalone_careers(conn, website, matched_ats, matched_url)
+            conn.commit()
+            cats = {}
+            for j in matched_jobs:
+                c = categorize(j["title"])
+                cats[c] = cats.get(c, 0) + 1
+            summary = " | ".join(f"{k}:{v}" for k, v in sorted(cats.items()))
+            with _print_lock:
+                print(f"[{idx}/{total}] {name} (standalone) → {matched_ats} ({len(matched_jobs)} jobs) [{summary}]")
+            return True
+        else:
+            ats_status = "not_found" if valid_website else None
+            update_standalone_careers(conn, website, ats_status, fallback_careers_url)
+            conn.commit()
+            with _print_lock:
+                fallback_note = f" → {fallback_careers_url}" if fallback_careers_url else ""
+                label = "not found" if valid_website else "no valid website"
+                print(f"[{idx}/{total}] {name} (standalone) → {label}{fallback_note}")
+            return False
+    finally:
+        conn.close()
+
+
 # --- Main ---
 
 _ATS_FETCHERS = {
@@ -534,6 +703,7 @@ def _scrape_one(company: dict, total: int, idx: int) -> bool:
     matched_ats = None
     matched_jobs = []
     matched_url = None
+    fallback_careers_url = None
 
     valid_website = (
         bool(website)
@@ -554,9 +724,8 @@ def _scrape_one(company: dict, total: int, idx: int) -> bool:
     if matched_ats is None:
         # Full discovery: try each careers path and scan for ATS links.
         if valid_website:
-            discovery = discover_ats(website)
-            if discovery:
-                ats_name, slug, board_url = discovery
+            ats_name, slug, url = discover_ats(website)
+            if ats_name:
                 fetcher = _ATS_FETCHERS.get(ats_name)
                 if fetcher:
                     result = fetcher(slug)
@@ -565,7 +734,11 @@ def _scrape_one(company: dict, total: int, idx: int) -> bool:
                         matched_ats = ats_name
                     else:
                         matched_ats = ats_name
-                        matched_url = board_url
+                        matched_url = url
+            elif url:
+                # Found a careers page but ATS isn't one we support — save the URL so
+                # the UI can at least link to it with "apply ↗".
+                fallback_careers_url = url
         elif website:
             with _print_lock:
                 print(f"[{idx}/{total}] {name} → skipped bad URL: {website}")
@@ -590,14 +763,47 @@ def _scrape_one(company: dict, total: int, idx: int) -> bool:
             # Only mark 'not_found' if we actually checked a valid company website.
             # No website or a bad URL → leave careers_ats as NULL (unknown, not 'not hiring').
             ats_status = "not_found" if valid_website else None
-            update_careers_status(conn, cid, ats_status, None)
+            # Preserve any fallback URL so the UI can show "apply ↗" even when we
+            # can't count roles (e.g. company uses Rippling, Teamtailor, etc.).
+            update_careers_status(conn, cid, ats_status, fallback_careers_url)
             conn.commit()
             with _print_lock:
+                fallback_note = f" → {fallback_careers_url}" if fallback_careers_url else ""
                 label = "not found" if valid_website else "no valid website"
-                print(f"[{idx}/{total}] {name} → {label}")
+                print(f"[{idx}/{total}] {name} → {label}{fallback_note}")
             return False
     finally:
         conn.close()
+
+
+def _run_batch(items: list[dict], fn, workers: int) -> tuple[int, int]:
+    """Run a scrape function over a list of items, returning (found, not_found)."""
+    found = not_found = 0
+    total = len(items)
+    if workers <= 1:
+        for i, item in enumerate(items):
+            if fn(item, total, i + 1):
+                found += 1
+            else:
+                not_found += 1
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {
+                executor.submit(fn, item, total, i + 1): item
+                for i, item in enumerate(items)
+            }
+            for future in as_completed(futures):
+                try:
+                    if future.result():
+                        found += 1
+                    else:
+                        not_found += 1
+                except Exception as e:
+                    item = futures[future]
+                    with _print_lock:
+                        print(f"  ERROR {item.get('name', item.get('website', '?'))}: {e}")
+                    not_found += 1
+    return found, not_found
 
 
 def scrape(
@@ -617,42 +823,29 @@ def scrape(
             hiring_sweep=hiring_sweep,
             accelerator=accelerator,
         )
+        standalone = [] if hiring_sweep else get_pending_standalone_websites(
+            conn,
+            rediscover_after_days=rediscover_after_days,
+        )
     finally:
         conn.close()
 
     if limit:
         companies = companies[:limit]
+        standalone = standalone[:max(0, limit - len(companies))]
 
-    mode = "hiring sweep" if hiring_sweep else "EDGAR-matched"
-    print(f"Scraping careers for {len(companies)} companies [{mode}] workers={workers}...\n")
+    mode = "hiring sweep" if hiring_sweep else "raised-feed"
+    print(f"Scraping careers for {len(companies)} accelerator companies [{mode}] workers={workers}...")
+    if standalone:
+        print(f"Scraping careers for {len(standalone)} standalone/TC companies workers={workers}...")
+    print()
 
-    total = len(companies)
-    found = not_found = 0
+    found, not_found = _run_batch(companies, _scrape_one, workers)
 
-    if workers <= 1:
-        for i, company in enumerate(companies):
-            result = _scrape_one(company, total, i + 1)
-            if result:
-                found += 1
-            else:
-                not_found += 1
-    else:
-        with ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = {
-                executor.submit(_scrape_one, company, total, i + 1): company
-                for i, company in enumerate(companies)
-            }
-            for future in as_completed(futures):
-                try:
-                    if future.result():
-                        found += 1
-                    else:
-                        not_found += 1
-                except Exception as e:
-                    company = futures[future]
-                    with _print_lock:
-                        print(f"  ERROR {company['name']}: {e}")
-                    not_found += 1
+    if standalone:
+        sf, snf = _run_batch(standalone, _scrape_standalone_one, workers)
+        found += sf
+        not_found += snf
 
     print(f"\nDone. Found: {found}, Not found: {not_found}")
 

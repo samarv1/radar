@@ -74,8 +74,13 @@ function OpenRoles({ company, hiringMode }: { company: Company; hiringMode: bool
 
   let status: React.ReactNode;
   if (!hasData) {
-    // not_found means our scraper didn't detect a board, not that they're definitely not hiring
-    status = <span className="text-muted-foreground/50">—</span>;
+    // not_found means our scraper didn't detect a supported ATS board.
+    // If we still have a careers URL (e.g. Rippling, Teamtailor, custom page), link to it.
+    status = company.careers_url ? (
+      <a href={company.careers_url} target="_blank" rel="noopener noreferrer" className="relative z-10 hover:opacity-70 transition-opacity font-medium text-green-600">
+        apply ↗
+      </a>
+    ) : <span className="text-muted-foreground/50">—</span>;
   } else if (total === 0) {
     status = <span className="text-muted-foreground/50">none</span>;
   } else {
@@ -166,7 +171,7 @@ export function CompanyCard({
               <p className="text-xs text-muted-foreground/70">{roundLabel}</p>
             )}
             <p className="text-xs text-muted-foreground mt-0.5 flex items-center justify-end gap-1">
-              {fresh && (company.has_edgar || company.date_source === "announced" || company.date_source === "posted") && <Flame className="relative z-10 shrink-0 text-orange-400" size={13} />}
+              {fresh && (company.has_edgar || company.date_source === "announced" || company.date_source === "posted" || company.date_source === "discovered") && <Flame className="relative z-10 shrink-0 text-orange-400" size={13} />}
               <span>
                 {hiringMode
                   ? (company.date_source === "posted" ? "posted " : "discovered ")
