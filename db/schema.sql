@@ -76,3 +76,8 @@ CREATE TABLE IF NOT EXISTS funding_news (
 
 CREATE INDEX IF NOT EXISTS idx_funding_news_accelerator ON funding_news(accelerator_id)
     WHERE accelerator_id IS NOT NULL;
+
+-- Idempotent column additions for columns added after initial table creation.
+-- apply_schema() runs this file on every pipeline start, so these ADD COLUMN
+-- IF NOT EXISTS statements backfill any columns the live DB is missing.
+ALTER TABLE edgar_filings ADD COLUMN IF NOT EXISTS offering_name TEXT;
