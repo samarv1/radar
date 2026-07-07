@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { Geist, Geist_Mono } from "next/font/google";
 import { Analytics } from "@vercel/analytics/next";
 import "./globals.css";
@@ -48,6 +49,13 @@ export default function RootLayout({
       <body className="min-h-full flex flex-col">
         {children}
         <footer className="mt-auto border-t border-border px-[12vw] py-5 text-xs text-muted-foreground text-right">
+          <Link
+            href="/philosophy"
+            className="underline underline-offset-2 hover:text-foreground transition-colors"
+          >
+            Philosophy
+          </Link>
+          <span className="mx-2 text-muted-foreground/50">·</span>
           built by{" "}
           <a
             href="https://www.linkedin.com/in/samarv/"
