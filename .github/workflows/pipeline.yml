@@ -17,7 +17,7 @@ on:
         required: false
         default: "daily"
         type: choice
-        options: [daily, weekly, yc, a16z, sequoia, lightspeed, pear, techstars, careers-rescrape]
+        options: [daily, weekly, yc, a16z, sequoia, lightspeed, pear, techstars, careers-rescrape, signalbase]
 
 jobs:
   pipeline:
