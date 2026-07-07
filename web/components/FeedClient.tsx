@@ -9,7 +9,7 @@ import type { Company } from "@/lib/db";
 
 const PAGE_SIZE = 15;
 
-const SIX_MONTHS_MS = 180 * 24 * 60 * 60 * 1000;
+const ONE_MONTH_MS = 30 * 24 * 60 * 60 * 1000;
 
 function hiringStatus(c: Company): "yes" | "no" | "unknown" {
   const hasData = c.careers_ats && c.careers_ats !== "not_found";
@@ -167,7 +167,7 @@ export function FeedClient({
   const [hiringRoleLevels, setHiringRoleLevels] = useState<string[]>([]);
   const [hiringVerticals, setHiringVerticals] = useState<string[]>([]);
   const [expandedOld, setExpandedOld] = useState(false);
-  const [tab, setTab] = useState<"raised" | "hiring">("hiring");
+  const [tab, setTab] = useState<"raised" | "hiring">("raised");
   const [view, setView] = useState<"feed" | "bookmarks">("feed");
   const [raisedPage, setRaisedPage] = useState(1);
   const [hiringPage, setHiringPage] = useState(1);
@@ -190,11 +190,11 @@ const visible = applyFilters(companies, filters);
   const now = useMemo(() => Date.now(), []);
 
   const recent = visible
-    .filter((c) => now - new Date(c.date_filed).getTime() < SIX_MONTHS_MS)
+    .filter((c) => now - new Date(c.date_filed).getTime() < ONE_MONTH_MS)
     .sort(byDateDesc);
 
   const oldCompanies = visible
-    .filter((c) => now - new Date(c.date_filed).getTime() >= SIX_MONTHS_MS)
+    .filter((c) => now - new Date(c.date_filed).getTime() >= ONE_MONTH_MS)
     .sort(byDateDesc);
 
   const raisedTotalPages = Math.ceil(recent.length / PAGE_SIZE);
@@ -267,17 +267,6 @@ const visible = applyFilters(companies, filters);
           {/* Tab switcher */}
           <div className="flex gap-1 mb-6 border-b border-border">
             <button
-              onClick={() => setTab("hiring")}
-              className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ${
-                tab === "hiring"
-                  ? "border-foreground text-foreground"
-                  : "border-transparent text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              Actively Hiring
-              <span className="ml-1.5 text-xs text-muted-foreground">{filteredHiring.length}</span>
-            </button>
-            <button
               onClick={() => setTab("raised")}
               className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ${
                 tab === "raised"
@@ -287,6 +276,17 @@ const visible = applyFilters(companies, filters);
             >
               Raised
               <span className="ml-1.5 text-xs text-muted-foreground">{visible.length}</span>
+            </button>
+            <button
+              onClick={() => setTab("hiring")}
+              className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ${
+                tab === "hiring"
+                  ? "border-foreground text-foreground"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Actively Hiring
+              <span className="ml-1.5 text-xs text-muted-foreground">{filteredHiring.length}</span>
             </button>
           </div>
 
@@ -324,7 +324,7 @@ const visible = applyFilters(companies, filters);
                       className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors mb-4"
                     >
                       <span>{expandedOld ? "▾" : "▸"}</span>
-                      Funded 6+ months ago ({oldCompanies.length})
+                      Funded 30+ days ago ({oldCompanies.length})
                     </button>
 
                     {expandedOld && (
