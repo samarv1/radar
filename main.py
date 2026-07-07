@@ -5,7 +5,7 @@ Usage:
     uv run python main.py [--mode daily|weekly]
 
 daily  (default): EDGAR → CIK lookup → cross-reference → careers → Product Hunt (last 2 days)
-weekly           : all of the above + YC + all accelerator directories + PH full 90-day backfill
+weekly           : all of the above + YC + all accelerator directories + 180-day backfill for all funding sources
 """
 
 import argparse
@@ -20,6 +20,7 @@ from scrapers.lightspeed import scrape as scrape_lightspeed
 from scrapers.pear import scrape as scrape_pear
 from scrapers.producthunt import scrape as scrape_ph
 from scrapers.sequoia import scrape as scrape_sequoia
+from scrapers.signalbase import scrape as scrape_signalbase
 from scrapers.techcrunch import scrape as scrape_techcrunch
 from scrapers.techstars import scrape as scrape_techstars
 from scrapers.validate_standalone import run as run_validate_standalone
@@ -60,6 +61,9 @@ def run_daily():
     print("\n=== TechCrunch (last 2 days) ===")
     scrape_techcrunch(days_back=2)
 
+    print("\n=== Signalbase (last 2 days) ===")
+    scrape_signalbase(days_back=2)
+
     print("\n=== Standalone validation ===")
     run_validate_standalone()
 
@@ -86,6 +90,10 @@ def run_weekly():
     print("\n=== Techstars ===")
     scrape_techstars()
 
+    print("\n=== EDGAR broad scan (180 days) ===")
+    # Extends the daily 60-day broad scan to catch filings from the full 6-month window.
+    scrape_edgar_chunked(days_back=180, chunk_days=30)
+
     print("\n=== EDGAR targeted (accelerator cohort, 180 days) ===")
     # Pulls full 6-month filing history for each known-CIK company directly
     # from the EDGAR submissions API — bypasses the broad scan's 10k pagination limit.
@@ -96,11 +104,14 @@ def run_weekly():
     # not_found companies re-discover only if >75 days stale.
     scrape_careers(hiring_sweep=True, workers=12)
 
-    print("\n=== Product Hunt full backfill (90 days) ===")
-    scrape_ph(days_back=90)
+    print("\n=== Product Hunt full backfill (180 days) ===")
+    scrape_ph(days_back=180)
 
-    print("\n=== TechCrunch full backfill (90 days) ===")
-    scrape_techcrunch(days_back=90)
+    print("\n=== TechCrunch full backfill (180 days) ===")
+    scrape_techcrunch(days_back=180)
+
+    print("\n=== Signalbase full backfill (180 days) ===")
+    scrape_signalbase(days_back=180)
 
 
 SCRAPERS = {
