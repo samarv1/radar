@@ -547,13 +547,36 @@ def get_pending_standalone_websites(
 
     sql = f"""
         WITH combined AS (
-            -- TC-only announced companies
+            -- TC/Signalbase-only announced companies (mirrors dashboard tc_only filters)
             SELECT fn.website, fn.company_name AS name
             FROM funding_news fn
             WHERE fn.accelerator_id IS NULL
+              AND fn.source != 'a16z_build'
               AND fn.website IS NOT NULL
               AND fn.amount_usd IS NOT NULL
               AND fn.round_type IS NOT NULL
+              AND fn.round_type NOT IN ('Series D', 'Series E')
+              AND array_length(regexp_split_to_array(trim(fn.company_name), E'\\s+'), 1) <= 3
+              AND fn.company_name NOT LIKE '%:%'
+              AND fn.company_name NOT LIKE '%,%'
+              AND fn.company_name !~* '\\y(capital|fund|venture|ventures|partner|partners|vc)\\y'
+              AND (
+                fn.source != 'signalbase'
+                OR fn.industry IS NULL
+                OR fn.industry ILIKE '%tech%'
+                OR fn.industry ILIKE '%software%'
+                OR fn.industry ILIKE '%artificial intelligence%'
+                OR fn.industry ILIKE '%robotics%'
+                OR fn.industry ILIKE '%digital%'
+                OR fn.industry ILIKE '%platform%'
+                OR fn.industry ILIKE '%data%'
+                OR fn.industry IN (
+                  'CRM', 'E-commerce', 'Job Search', 'Payment Solutions', 'Engineering',
+                  'Financial Services', 'Healthcare', 'Biotechnology', 'Health and Wellness',
+                  'Scientific Services', 'Education', 'Insurance',
+                  'Transportation, Logistics, Supply Chain and Storage'
+                )
+              )
 
             UNION
 

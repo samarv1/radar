@@ -136,7 +136,7 @@ uv run python db/migrate_v7.py   # job_listings.first_seen_at
 **Pipeline:**
 ```bash
 uv sync
-cp .env.example .env   # set DATABASE_URL (Railway public URL) and PH_API_TOKEN
+cp .env.example .env   # set DATABASE_URL (local dev Postgres) and PH_API_TOKEN
 
 uv run python main.py --mode daily
 uv run python main.py --mode weekly

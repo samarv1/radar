@@ -49,10 +49,16 @@ def run():
         print(f"Loaded {len(edgar)} unmatched EDGAR filings.")
 
         with conn.cursor() as cur:
-            cur.execute("SELECT DISTINCT company_name FROM funding_news")
+            cur.execute("SELECT DISTINCT company_name FROM funding_news WHERE source = 'techcrunch'")
             tc_names = [row[0] for row in cur.fetchall()]
         tc_names_norm = [normalize(n) for n in tc_names]
         print(f"Loaded {len(tc_names)} TechCrunch companies.")
+
+        with conn.cursor() as cur:
+            cur.execute("SELECT DISTINCT company_name FROM funding_news WHERE source = 'signalbase'")
+            sb_names = [row[0] for row in cur.fetchall()]
+        sb_names_norm = [normalize(n) for n in sb_names]
+        print(f"Loaded {len(sb_names)} Signalbase companies.")
 
         with conn.cursor() as cur:
             cur.execute(
@@ -68,6 +74,7 @@ def run():
 
         tc_count = 0
         ph_count = 0
+        sb_count = 0
 
         for edgar_id, edgar_orig, edgar_norm in edgar:
             if not edgar_norm.strip():
@@ -101,6 +108,19 @@ def run():
                     ph_count += 1
                     print(f"  PH (score={score:.0f}): '{edgar_orig}' <-> '{ph_names[idx]}'")
 
+            if source is None and sb_names_norm:
+                result = process.extractOne(
+                    edgar_norm,
+                    sb_names_norm,
+                    scorer=fuzz.token_sort_ratio,
+                    score_cutoff=MATCH_THRESHOLD,
+                )
+                if result:
+                    _, score, idx = result
+                    source = "signalbase"
+                    sb_count += 1
+                    print(f"  SB (score={score:.0f}): '{edgar_orig}' <-> '{sb_names[idx]}'")
+
             if source is None:
                 continue
 
@@ -111,7 +131,7 @@ def run():
                 )
 
         conn.commit()
-        print(f"\nValidated: {tc_count} via TechCrunch, {ph_count} via Product Hunt")
+        print(f"\nValidated: {tc_count} via TechCrunch, {ph_count} via Product Hunt, {sb_count} via Signalbase")
 
         # Mark EDGAR "Other Technology" filings directly — no external signal needed.
         # Excludes zero-dollar raises and SPV series (e.g. "Heat Safety Solutions, LLC Series 8").
