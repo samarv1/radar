@@ -183,7 +183,7 @@ export async function getFeed(): Promise<Company[]> {
           ORDER BY published_at DESC LIMIT 1
         ) fn_site ON TRUE
         WHERE a.is_excluded = FALSE
-          AND e.date_filed >= NOW() - INTERVAL '180 days'
+          AND e.date_filed >= NOW() - INTERVAL '90 days'
           AND (
             (am.norm_site IS NOT NULL AND am.worst_status IS NULL)
             OR (am.norm_site IS NULL AND (a.company_status IS NULL OR a.company_status = 'Active'))
@@ -218,7 +218,20 @@ export async function getFeed(): Promise<Company[]> {
         0::int AS other_count,
         0::int AS intern_count,
         0::int AS new_grad_count,
-        NULL::text[] AS tags
+        CASE ef.industry_group
+          WHEN 'Other Technology'                    THEN ARRAY['saas', 'b2b']
+          WHEN 'Computers'                           THEN ARRAY['saas', 'hardware']
+          WHEN 'Business Services'                   THEN ARRAY['b2b', 'saas']
+          WHEN 'Telecommunications'                  THEN ARRAY['saas', 'b2b']
+          WHEN 'Biotechnology'                       THEN ARRAY['biotech', 'health']
+          WHEN 'Other Health Care'                   THEN ARRAY['health']
+          WHEN 'Hospitals and Physicians'            THEN ARRAY['health']
+          WHEN 'Pharmaceuticals'                     THEN ARRAY['pharma', 'health']
+          WHEN 'Insurance'                           THEN ARRAY['insurtech', 'fintech']
+          WHEN 'Other Banking and Financial Services' THEN ARRAY['fintech']
+          WHEN 'Manufacturing'                       THEN ARRAY['hardware']
+          ELSE NULL::text[]
+        END AS tags
       FROM edgar_filings ef
       LEFT JOIN LATERAL (
         SELECT website, round_type FROM funding_news
@@ -238,7 +251,7 @@ export async function getFeed(): Promise<Company[]> {
 
     UNION ALL
 
-    -- TechCrunch-announced companies without a Form D filing yet.
+    -- funding_news-announced companies without a Form D filing yet (TechCrunch, Signalbase, etc.).
     -- Quality filters: real funding amount, short name (not a descriptor fragment),
     -- no comma/colon in name (descriptor prefix pattern), no VC fund keywords.
     -- Excludes companies already in the standalone EDGAR path to avoid duplicates.
@@ -247,8 +260,8 @@ export async function getFeed(): Promise<Company[]> {
         fn.id + 1000000 AS id,
         fn.company_name AS name,
         fn.website      AS website,
-        'techcrunch'::text AS accelerator,
-        ARRAY['techcrunch']::text[] AS accelerators,
+        fn.source       AS accelerator,
+        ARRAY[fn.source]::text[] AS accelerators,
         NULL::text      AS batch,
         cc.careers_ats  AS careers_ats,
         cc.careers_url  AS careers_url,
@@ -265,16 +278,60 @@ export async function getFeed(): Promise<Company[]> {
         0::int AS other_count,
         0::int AS intern_count,
         0::int AS new_grad_count,
-        NULL::text[] AS tags
+        CASE
+          WHEN fn.industry IN ('Financial Services', 'Payment Solutions')
+            THEN ARRAY['fintech', 'payments']
+          WHEN fn.industry = 'Insurance'
+            THEN ARRAY['insurtech', 'fintech']
+          WHEN fn.industry IN ('Healthcare', 'Hospitals and Health Care', 'Health and Wellness')
+            THEN ARRAY['health']
+          WHEN fn.industry = 'Biotechnology'
+            THEN ARRAY['biotech', 'health']
+          WHEN fn.industry = 'Education'
+            THEN ARRAY['education', 'edtech']
+          WHEN fn.industry IN ('Robotics', 'Engineering')
+            THEN ARRAY['robotics', 'hardware']
+          WHEN fn.industry ILIKE '%artificial intelligence%'
+            THEN ARRAY['artificial intelligence', 'ai']
+          WHEN fn.industry = 'E-commerce'
+            THEN ARRAY['e-commerce', 'consumer']
+          WHEN fn.industry IN ('CRM', 'Sales Platform', 'Job Search',
+                               'Transportation, Logistics, Supply Chain and Storage')
+            THEN ARRAY['saas', 'b2b']
+          WHEN fn.industry ILIKE '%tech%' OR fn.industry ILIKE '%software%'
+            THEN ARRAY['saas']
+          ELSE NULL::text[]
+        END AS tags
       FROM funding_news fn
       LEFT JOIN company_careers cc ON cc.website = fn.website
       WHERE fn.accelerator_id IS NULL
+        AND fn.source != 'a16z_build'
+        AND fn.published_at >= NOW() - INTERVAL '90 days'
         AND fn.amount_usd IS NOT NULL
         AND array_length(regexp_split_to_array(trim(fn.company_name), '\s+'), 1) <= 3
         AND fn.company_name NOT LIKE '%:%'
         AND fn.company_name NOT LIKE '%,%'
         AND fn.company_name !~* '\y(capital|fund|venture|ventures|partner|partners|vc)\y'
         AND fn.round_type IS NOT NULL
+        AND fn.round_type NOT IN ('Series D', 'Series E')
+        AND NOT (fn.round_type = 'Pre-Seed' AND fn.amount_usd IS NULL)
+        AND (
+          fn.source != 'signalbase'
+          OR fn.industry IS NULL
+          OR fn.industry ILIKE '%tech%'
+          OR fn.industry ILIKE '%software%'
+          OR fn.industry ILIKE '%artificial intelligence%'
+          OR fn.industry ILIKE '%robotics%'
+          OR fn.industry ILIKE '%digital%'
+          OR fn.industry ILIKE '%platform%'
+          OR fn.industry ILIKE '%data%'
+          OR fn.industry IN (
+            'CRM', 'E-commerce', 'Job Search', 'Payment Solutions', 'Engineering',
+            'Financial Services', 'Healthcare', 'Biotechnology', 'Health and Wellness',
+            'Scientific Services', 'Education', 'Insurance',
+            'Transportation, Logistics, Supply Chain and Storage'
+          )
+        )
         AND NOT EXISTS (
           SELECT 1 FROM edgar_filings ef2
           WHERE ef2.accelerator_id IS NULL
@@ -312,7 +369,7 @@ export async function getFeed(): Promise<Company[]> {
       LEFT JOIN (${JOB_COUNTS_BASIC}) h ON h.company_id = a.id
       WHERE a.is_excluded = FALSE
         AND fn.source != 'a16z_build'
-        AND fn.published_at >= NOW() - INTERVAL '180 days'
+        AND fn.published_at >= NOW() - INTERVAL '90 days'
         AND NOT EXISTS (
           SELECT 1 FROM edgar_filings ef WHERE ef.accelerator_id = a.id
         )
