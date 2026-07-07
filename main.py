@@ -122,6 +122,7 @@ SCRAPERS = {
     "pear":      scrape_pear,
     "techstars": scrape_techstars,
     "careers-rescrape": lambda: scrape_careers(hiring_sweep=True, workers=12),
+    "signalbase": lambda: scrape_signalbase(days_back=180, workers=20),
 }
 
 if __name__ == "__main__":
