@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Radar, Bookmark, ChevronLeft, ChevronRight } from "lucide-react";
 import { FilterBar, HiringFilterBar, DEFAULT_FILTERS, VERTICAL_KEYWORDS, tagMatchesKeyword, normalizeRoundType, type Filters } from "@/components/FilterBar";
 import { CompanyCard } from "@/components/CompanyCard";
@@ -8,8 +8,6 @@ import { useBookmarks } from "@/lib/useBookmarks";
 import type { Company } from "@/lib/db";
 
 const PAGE_SIZE = 15;
-
-const ONE_MONTH_MS = 30 * 24 * 60 * 60 * 1000;
 
 function hiringStatus(c: Company): "yes" | "no" | "unknown" {
   const hasData = c.careers_ats && c.careers_ats !== "not_found";
@@ -166,7 +164,6 @@ export function FeedClient({
   const [hiringRoleTypes, setHiringRoleTypes] = useState<string[]>([]);
   const [hiringRoleLevels, setHiringRoleLevels] = useState<string[]>([]);
   const [hiringVerticals, setHiringVerticals] = useState<string[]>([]);
-  const [expandedOld, setExpandedOld] = useState(false);
   const [tab, setTab] = useState<"raised" | "hiring">("raised");
   const [view, setView] = useState<"feed" | "bookmarks">("feed");
   const [raisedPage, setRaisedPage] = useState(1);
@@ -186,16 +183,8 @@ export function FeedClient({
 
 
 const visible = applyFilters(companies, filters);
-  // eslint-disable-next-line react-hooks/purity
-  const now = useMemo(() => Date.now(), []);
 
-  const recent = visible
-    .filter((c) => now - new Date(c.date_filed).getTime() < ONE_MONTH_MS)
-    .sort(byDateDesc);
-
-  const oldCompanies = visible
-    .filter((c) => now - new Date(c.date_filed).getTime() >= ONE_MONTH_MS)
-    .sort(byDateDesc);
+  const recent = visible.sort(byDateDesc);
 
   const raisedTotalPages = Math.ceil(recent.length / PAGE_SIZE);
   const pagedRecent = recent.slice((raisedPage - 1) * PAGE_SIZE, raisedPage * PAGE_SIZE);
@@ -314,31 +303,6 @@ const visible = applyFilters(companies, filters);
                       ))}
                     </div>
                     <Pagination page={raisedPage} totalPages={raisedTotalPages} onPage={setRaisedPage} />
-                  </div>
-                )}
-
-                {oldCompanies.length > 0 && (
-                  <div>
-                    <button
-                      onClick={() => setExpandedOld((prev) => !prev)}
-                      className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors mb-4"
-                    >
-                      <span>{expandedOld ? "▾" : "▸"}</span>
-                      Funded 30+ days ago ({oldCompanies.length})
-                    </button>
-
-                    {expandedOld && (
-                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                        {oldCompanies.map((c) => (
-                          <CompanyCard
-                            key={c.id}
-                            company={c}
-                            isBookmarked={isBookmarked(c.id)}
-                            onToggleBookmark={() => toggle(c.id)}
-                          />
-                        ))}
-                      </div>
-                    )}
                   </div>
                 )}
               </div>
