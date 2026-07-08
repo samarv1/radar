@@ -118,16 +118,14 @@ gh workflow run pipeline.yml -f mode=careers-rescrape
 
 ## Database Migrations
 
-Run migrations in order when setting up or upgrading:
+`db/schema.sql` covers the original tables only. Run migrations in order (after `apply_schema()`) when setting up a new database:
 
 ```bash
-uv run python db/migrate_v2.py   # funding_news table
-uv run python db/migrate_v3.py   # accelerator_companies.stage
-uv run python db/migrate_v4.py   # job_listings table
-uv run python db/migrate_v5.py   # job_listings.scraped_at
-uv run python db/migrate_v6.py   # job_listings.posted_at
-uv run python db/migrate_v7.py   # job_listings.first_seen_at
+uv run python -c "from db.connection import apply_schema; apply_schema()"
+uv run python db/migrate.py
 ```
+
+`db/migrate.py` compiles all migrations (v2-v15) into one script and runs them in order. All migrations use `IF NOT EXISTS`-style DDL (or, for v12, a data-fix `UPDATE` that's a no-op on an empty table), so it's safe to run start-to-finish against a brand-new database, or to re-run against one that's already partially migrated. The individual `db/migrate_v*.py` files are kept for history/reference.
 
 ---
 
@@ -158,3 +156,22 @@ cd web
 npm install
 npm run dev   # reads DATABASE_URL from ../.env
 ```
+
+---
+
+## Staging Environment
+
+A separate Railway Postgres + web service exists for staging, fully isolated from production. Use it to run a scraper change and see the resulting data on a real staging URL immediately, instead of waiting for the next cron run to repopulate production.
+
+**Setup (one-time):** a `staging` git branch is tracked by a Railway environment with its own Postgres instance. The staging DB starts empty and is bootstrapped with `apply_schema()` + all migrations (see above).
+
+**Running a scraper against staging:**
+```bash
+set -a && source .env.staging && set +a   # .env.staging holds staging's DATABASE_URL — untracked, not committed
+uv run python main.py --mode yc
+```
+`db/connection.py`'s `load_dotenv()` uses `override=False`, so the exported `DATABASE_URL` wins over the default `.env` for the rest of that shell session. Close or re-`source .env` in that terminal afterward so a later command doesn't accidentally hit staging when you meant prod (or vice versa).
+
+**Workflow:** merge feature branches into `staging` first → Railway auto-deploys the staging web app → run the relevant scraper locally against staging → review the result on the staging URL → merge `staging` into `main` once satisfied, which deploys to production as before. No GitHub Actions changes — the cron pipeline in `.github/workflows/pipeline.yml` only ever runs against production's `DATABASE_URL` secret.
+
+**Watch out for:** `precheck.sh` sources `web/.env.local` if present. If you ever create a `web/.env.local` pointed at staging (to run `next dev` locally against staging data), don't leave it in place when running `./precheck.sh` before a production deploy — it'll silently check staging's DB instead of prod's.
