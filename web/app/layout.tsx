@@ -24,10 +24,6 @@ export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
   title: "Radar",
   description: "Recently funded startups before they post jobs.",
-  icons: {
-    icon: "/favicon.svg",
-    apple: "/apple-icon",
-  },
   openGraph: {
     title: "Radar",
     description: "Recently funded startups before they post jobs.",

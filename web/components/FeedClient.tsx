@@ -128,6 +128,21 @@ function byHiringDate(a: Company, b: Company) {
   return aPosted === bPosted ? 0 : aPosted ? -1 : 1;
 }
 
+function getPageNumbers(page: number, totalPages: number): (number | "...")[] {
+  const pages: (number | "...")[] = [];
+  const addPage = (p: number) => pages.push(p);
+
+  addPage(1);
+  if (page > 4) pages.push("...");
+  for (let p = Math.max(2, page - 2); p <= Math.min(totalPages - 1, page + 2); p++) {
+    addPage(p);
+  }
+  if (page < totalPages - 3) pages.push("...");
+  if (totalPages > 1) addPage(totalPages);
+
+  return pages;
+}
+
 function Pagination({
   page,
   totalPages,
@@ -138,24 +153,46 @@ function Pagination({
   onPage: (p: number) => void;
 }) {
   if (totalPages <= 1) return null;
+  const pageNumbers = getPageNumbers(page, totalPages);
+
   return (
-    <div className="flex items-center justify-center gap-3 mt-8">
+    <div className="flex items-center justify-center gap-2 mt-8">
       <button
         onClick={() => onPage(Math.max(1, page - 1))}
         disabled={page === 1}
-        className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+        className="flex items-center gap-1 h-8 px-3 rounded-lg border border-border bg-background text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40 disabled:pointer-events-none transition-colors"
       >
-        <ChevronLeft size={18} />
+        <ChevronLeft size={16} />
+        Prev
       </button>
-      <span className="text-sm text-muted-foreground tabular-nums">
-        {page} / {totalPages}
-      </span>
+
+      {pageNumbers.map((p, i) =>
+        p === "..." ? (
+          <span key={`ellipsis-${i}`} className="px-1 text-sm text-muted-foreground">
+            ...
+          </span>
+        ) : (
+          <button
+            key={p}
+            onClick={() => onPage(p)}
+            className={`h-8 min-w-8 px-2.5 rounded-lg border text-sm font-medium tabular-nums transition-colors ${
+              p === page
+                ? "border-foreground bg-foreground text-background"
+                : "border-border bg-background text-foreground hover:bg-muted"
+            }`}
+          >
+            {p}
+          </button>
+        )
+      )}
+
       <button
         onClick={() => onPage(Math.min(totalPages, page + 1))}
         disabled={page === totalPages}
-        className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+        className="flex items-center gap-1 h-8 px-3 rounded-lg border border-border bg-background text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40 disabled:pointer-events-none transition-colors"
       >
-        <ChevronRight size={18} />
+        Next
+        <ChevronRight size={16} />
       </button>
     </div>
   );
