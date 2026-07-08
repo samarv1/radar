@@ -71,6 +71,7 @@ CREATE TABLE IF NOT EXISTS funding_news (
     source TEXT NOT NULL DEFAULT 'techcrunch',
     accelerator_id INT REFERENCES accelerator_companies(id),
     website TEXT,
+    industry TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -81,3 +82,4 @@ CREATE INDEX IF NOT EXISTS idx_funding_news_accelerator ON funding_news(accelera
 -- apply_schema() runs this file on every pipeline start, so these ADD COLUMN
 -- IF NOT EXISTS statements backfill any columns the live DB is missing.
 ALTER TABLE edgar_filings ADD COLUMN IF NOT EXISTS offering_name TEXT;
+ALTER TABLE funding_news ADD COLUMN IF NOT EXISTS industry TEXT;
