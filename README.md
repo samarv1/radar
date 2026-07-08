@@ -29,6 +29,8 @@ Companies that have recently closed a funding round, surfaced from:
 
 **4. TechCrunch funding news** — We scrape TechCrunch's venture category via their WordPress API and parse funding announcements. Company names are extracted from article titles and body content (via hyperlink parsing), with slug-based fallback. This catches companies that raised but aren't in any accelerator directory. Companies that appear in both TC and EDGAR get the EDGAR filing as the canonical record ("raised"); TC-only companies are labeled "announced."
 
+**4b. Signalbase funding news** — Same idea as TechCrunch, sourced from trysignalbase.com's public sitemap instead. Parses company name/amount/round from JSON-LD + meta tags on each funding page and upserts into the same `funding_news` table (`source='signalbase'`), so it feeds the "announced" category alongside TC.
+
 **5. Product Hunt launches** — Pulled via GraphQL API (last 90 days, ≥50 upvotes) and used as a cross-reference validation signal to confirm EDGAR filers are real tech companies. Not surfaced as a standalone feed source (too noisy).
 
 ### Actively Hiring tab
@@ -54,6 +56,7 @@ Role counts are broken down by type (Eng/Product/GTM/Other) and level (Intern/Ne
 | Techstars | Typesense API (public token) |
 | Product Hunt | GraphQL API (requires free dev token) |
 | TechCrunch | WordPress REST API |
+| Signalbase | Sitemap scrape (trysignalbase.com) |
 | ATS (Greenhouse/Lever/Ashby/Workable/BambooHR) | Public job board APIs |
 
 ---
@@ -76,6 +79,7 @@ enrich_websites.py ────────────────────�
 
 Product Hunt API ──────────────────────────────────────► ph_launches (cross-reference only)
 TechCrunch WP API ─────────────────────────────────────► funding_news table
+Signalbase sitemap scrape ─────────────────────────────► funding_news table
 
 yc_hiring.py ─────────────────────────────────────────► resets careers_scraped_at for YC isHiring companies
 careers.py ───────────────────────────────────────────► job_listings (Greenhouse/Lever/Ashby/Workable/BambooHR)
@@ -102,8 +106,8 @@ The frontend is a Next.js app (`web/`) that reads directly from the same Postgre
 
 The pipeline runs automatically via GitHub Actions:
 
-- **Daily (7am UTC):** EDGAR → CIK lookup → cross-reference → careers (EDGAR-matched) → a16z Build newsletter → YC hiring signal → careers sweep (new companies only) → Product Hunt → TechCrunch → standalone validation → EDGAR enrichment
-- **Weekly (Monday):** Re-scrapes all accelerator directories (YC, a16z, Sequoia, Lightspeed, Pear, Techstars) + 30-day careers rescrape + full PH backfill
+- **Daily (7am UTC):** EDGAR → CIK lookup → cross-reference → careers (EDGAR-matched) → a16z Build newsletter → YC hiring signal → careers sweep (new companies only) → Product Hunt → TechCrunch → Signalbase → standalone validation → EDGAR enrichment
+- **Weekly (Monday):** Re-scrapes all accelerator directories (YC, a16z, Sequoia, Lightspeed, Pear, Techstars) + 30-day careers rescrape + full PH backfill + full Signalbase backfill (180 days)
 - **Monday 12pm UTC:** Standalone 30-day careers rescrape (all accelerator companies, stale > 30 days)
 
 To trigger a run manually:
@@ -111,6 +115,7 @@ To trigger a run manually:
 gh workflow run pipeline.yml -f mode=daily
 gh workflow run pipeline.yml -f mode=weekly
 gh workflow run pipeline.yml -f mode=careers-rescrape
+gh workflow run pipeline.yml -f mode=signalbase
 # or: yc, a16z, sequoia, lightspeed, pear, techstars
 ```
 
@@ -159,19 +164,17 @@ npm run dev   # reads DATABASE_URL from ../.env
 
 ---
 
-## Staging Environment
+## Promoting Local Data to Production
 
-A separate Railway Postgres + web service exists for staging, fully isolated from production. Use it to run a scraper change and see the resulting data on a real staging URL immediately, instead of waiting for the next cron run to repopulate production.
+The separate Railway staging environment (staging branch + isolated Postgres) has been rolled back — it added deploy overhead without much payoff. Instead, test scraper changes against your local DB and promote the resulting rows straight into production with `db/promote.py`, without re-running scrapers a second time against prod.
 
-**Setup (one-time):** a `staging` git branch is tracked by a Railway environment with its own Postgres instance. The staging DB starts empty and is bootstrapped with `apply_schema()` + all migrations (see above).
+**Setup:** set `PROD_DATABASE_URL` in `.env` alongside your local `DATABASE_URL`.
 
-**Running a scraper against staging:**
+**Usage:**
 ```bash
-set -a && source .env.staging && set +a   # .env.staging holds staging's DATABASE_URL — untracked, not committed
-uv run python main.py --mode yc
+uv run python db/promote.py
 ```
-`db/connection.py`'s `load_dotenv()` uses `override=False`, so the exported `DATABASE_URL` wins over the default `.env` for the rest of that shell session. Close or re-`source .env` in that terminal afterward so a later command doesn't accidentally hit staging when you meant prod (or vice versa).
 
-**Workflow:** merge feature branches into `staging` first → Railway auto-deploys the staging web app → run the relevant scraper locally against staging → review the result on the staging URL → merge `staging` into `main` once satisfied, which deploys to production as before. No GitHub Actions changes — the cron pipeline in `.github/workflows/pipeline.yml` only ever runs against production's `DATABASE_URL` secret.
+This applies the schema + all migrations against the target first, then copies new rows table-by-table (`accelerator_companies` → `edgar_filings`, `ph_launches`, `funding_news`, `job_listings`, `company_careers`), remapping local FK ids to their production equivalents along the way (matched on each table's own unique constraint, e.g. `source_url` for companies). Inserts use `ON CONFLICT ... DO NOTHING`, so it never overwrites existing production rows and is always safe to re-run. It refuses to run if `DATABASE_URL` and `PROD_DATABASE_URL` are identical.
 
-**Watch out for:** `precheck.sh` sources `web/.env.local` if present. If you ever create a `web/.env.local` pointed at staging (to run `next dev` locally against staging data), don't leave it in place when running `./precheck.sh` before a production deploy — it'll silently check staging's DB instead of prod's.
+The cron pipeline in `.github/workflows/pipeline.yml` is unaffected — it always runs against production's `DATABASE_URL` secret directly.
