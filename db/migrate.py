@@ -176,8 +176,8 @@ STEPS = [
 ]
 
 
-def run():
-    conn = get_connection()
+def run(url: str | None = None):
+    conn = get_connection(url)
     try:
         with conn.cursor() as cur:
             for label, ddl in STEPS:

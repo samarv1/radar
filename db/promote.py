@@ -25,6 +25,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from db.connection import get_connection, apply_schema
+from db.migrate import run as apply_migrations
 
 
 SOURCE_URL = os.environ.get("DATABASE_URL")
@@ -91,7 +92,7 @@ def promote_accelerator_companies(src_conn, tgt_conn):
 
         source_urls = list(local_id_by_source_url.keys())
         cur.execute(
-            f"SELECT id, source_url FROM {table} WHERE source_url = ANY(%s)",
+            f"SELECT source_url, id FROM {table} WHERE source_url = ANY(%s)",
             (source_urls,),
         )
         prod_id_by_source_url = dict(cur.fetchall())
@@ -180,6 +181,7 @@ def run():
     summary = []
     try:
         apply_schema(TARGET_URL)
+        apply_migrations(TARGET_URL)
 
         id_map, inserted, total = promote_accelerator_companies(src_conn, tgt_conn)
         summary.append(("accelerator_companies", inserted, total - inserted, total))
