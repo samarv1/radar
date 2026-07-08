@@ -349,6 +349,12 @@ def _fetch_and_parse(url: str) -> dict | None:
     return parse_page(html, url)
 
 
+def _ensure_schema(conn):
+    with conn.cursor() as cur:
+        cur.execute("ALTER TABLE funding_news ADD COLUMN IF NOT EXISTS industry VARCHAR(150)")
+    conn.commit()
+
+
 def scrape(days_back: int = 2, workers: int = DEFAULT_WORKERS):
     print(f"Fetching Signalbase funding URLs (last {days_back} days)...")
     urls = fetch_sitemap_urls(days_back)
@@ -360,6 +366,7 @@ def scrape(days_back: int = 2, workers: int = DEFAULT_WORKERS):
 
     conn = get_connection()
     try:
+        _ensure_schema(conn)
         ids, names_norm = load_accelerator_index(conn)
         inserted = updated = skipped = matched = 0
         done = 0
