@@ -183,7 +183,7 @@ export async function getFeed(): Promise<Company[]> {
           ORDER BY published_at DESC LIMIT 1
         ) fn_site ON TRUE
         WHERE a.is_excluded = FALSE
-          AND e.date_filed >= NOW() - INTERVAL '90 days'
+          AND e.date_filed >= (NOW() AT TIME ZONE 'UTC')::date - INTERVAL '90 days'
           AND (
             (am.norm_site IS NOT NULL AND am.worst_status IS NULL)
             OR (am.norm_site IS NULL AND (a.company_status IS NULL OR a.company_status = 'Active'))
