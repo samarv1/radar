@@ -44,7 +44,16 @@ function applyFilters(companies: Company[], f: Filters): Company[] {
     if (f.hiring.length > 0 && !f.hiring.includes(hiringStatus(c))) return false;
 
     if (f.days.length > 0) {
-      const daysAgo = (Date.now() - new Date(c.date_filed).getTime()) / (1000 * 60 * 60 * 24);
+      // Calendar-date diff (UTC, midnight-truncated) to match the SQL cutoff
+      // in getFeed(), which compares (NOW() AT TIME ZONE 'UTC')::date against
+      // date_filed. A raw Date.now() diff includes today's elapsed hours,
+      // which pushes borderline rows (filed exactly N days ago) over the
+      // threshold and drops them even though the server already included them.
+      const today = new Date();
+      const todayUTC = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
+      const filed = new Date(c.date_filed);
+      const filedUTC = Date.UTC(filed.getUTCFullYear(), filed.getUTCMonth(), filed.getUTCDate());
+      const daysAgo = (todayUTC - filedUTC) / (1000 * 60 * 60 * 24);
       if (daysAgo > Math.max(...f.days)) return false;
     }
 

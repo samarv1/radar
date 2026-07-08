@@ -246,6 +246,7 @@ export async function getFeed(): Promise<Company[]> {
       LEFT JOIN company_careers cc ON cc.website = COALESCE(fn.website, ph.website)
       WHERE ef.accelerator_id IS NULL
         AND ef.standalone_source IS NOT NULL
+        AND ef.date_filed >= (NOW() AT TIME ZONE 'UTC')::date - INTERVAL '90 days'
       ORDER BY ef.company_name, ef.date_filed DESC
     ) standalone
 

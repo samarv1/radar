@@ -224,7 +224,7 @@ export function FilterBar({ filters, onChange }: Props) {
 
       <FilterDropdown label="Filed within" activeCount={filters.days.length}>
         <CheckboxList
-          options={[[30, "30d"], [60, "60d"], [90, "90d"], [180, "180d"]]}
+          options={[[30, "30d"], [60, "60d"], [90, "90d"]]}
           values={filters.days}
           onChange={(v) => onChange({ ...filters, days: v })}
         />
