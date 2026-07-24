@@ -5,7 +5,8 @@ Usage:
     uv run python main.py [--mode daily|weekly]
 
 daily  (default): EDGAR → CIK lookup → cross-reference → careers → Product Hunt (last 2 days)
-weekly           : all of the above + YC + all accelerator directories + 180-day backfill for all funding sources
+weekly           : all of the above + YC + all accelerator directories + 180-day backfill for EDGAR/TechCrunch/Signalbase
+                    + 30-day Product Hunt backfill (PH's rate limit rules out a full 180-day sweep)
 """
 
 import argparse
@@ -104,8 +105,10 @@ def run_weekly():
     # not_found companies re-discover only if >75 days stale.
     scrape_careers(hiring_sweep=True, workers=12)
 
-    print("\n=== Product Hunt full backfill (180 days) ===")
-    scrape_ph(days_back=180)
+    print("\n=== Product Hunt backfill (30 days) ===")
+    # Not 180: PH's own rate limit (6250 pts/window) makes a full 180-day,
+    # votes-ordered sweep infeasible even with the early-break-on-votes fix.
+    scrape_ph(days_back=30)
 
     print("\n=== TechCrunch full backfill (180 days) ===")
     scrape_techcrunch(days_back=180)
@@ -126,6 +129,14 @@ SCRAPERS = {
     # weekly runs instead of trying everything at once (see July 20 2026 timeout).
     "careers-rescrape": lambda: scrape_careers(hiring_sweep=True, workers=12, limit=500),
     "signalbase": lambda: scrape_signalbase(days_back=180, workers=20),
+    "edgar-broad-backfill": lambda: scrape_edgar_chunked(days_back=180, chunk_days=30),
+    "edgar-targeted-backfill": lambda: scrape_edgar_targeted(days_back=180),
+    "techcrunch-backfill": lambda: scrape_techcrunch(days_back=180),
+    # 30-day safety net, not a full 180-day backfill — see July 23 2026 discussion:
+    # PH's own rate limit (6250 pts/window) makes a 180-day sweep infeasible even
+    # with the early-break-on-votes fix, and 180 days of PH signal is stale for
+    # this product's use case anyway. Daily already covers the last 2 days.
+    "ph-backfill": lambda: scrape_ph(days_back=30),
 }
 
 if __name__ == "__main__":

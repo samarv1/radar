@@ -9,7 +9,12 @@ on:
     - cron: "30 9 * * 1"   # Monday 9:30 — Lightspeed
     - cron: "0 10 * * 1"   # Monday 10am — Pear
     - cron: "30 10 * * 1"  # Monday 10:30 — Techstars
-    - cron: "0 12 * * 1"   # Monday 12pm — careers 30-day rescrape
+    - cron: "0 12 * * 1"   # Monday 12pm  — careers 30-day rescrape
+    - cron: "30 12 * * 1"  # Monday 12:30 — EDGAR broad backfill (180d)
+    - cron: "0 13 * * 1"   # Monday 1pm   — EDGAR targeted backfill (180d)
+    - cron: "30 13 * * 1"  # Monday 1:30  — TechCrunch backfill (180d)
+    - cron: "0 14 * * 1"   # Monday 2pm   — Product Hunt backfill (30d)
+    - cron: "30 14 * * 1"  # Monday 2:30  — Signalbase backfill (180d)
   workflow_dispatch:
     inputs:
       mode:
@@ -17,7 +22,7 @@ on:
         required: false
         default: "daily"
         type: choice
-        options: [daily, weekly, yc, a16z, sequoia, lightspeed, pear, techstars, careers-rescrape, signalbase]
+        options: [daily, weekly, yc, a16z, sequoia, lightspeed, pear, techstars, careers-rescrape, signalbase, edgar-broad-backfill, edgar-targeted-backfill, techcrunch-backfill, ph-backfill]
 
 jobs:
   pipeline:
@@ -43,7 +48,12 @@ jobs:
             "30 9 * * 1")  echo "mode=lightspeed" >> $GITHUB_OUTPUT ;;
             "0 10 * * 1")  echo "mode=pear"       >> $GITHUB_OUTPUT ;;
             "30 10 * * 1") echo "mode=techstars"         >> $GITHUB_OUTPUT ;;
-            "0 12 * * 1")  echo "mode=careers-rescrape" >> $GITHUB_OUTPUT ;;
+            "0 12 * * 1")  echo "mode=careers-rescrape"       >> $GITHUB_OUTPUT ;;
+            "30 12 * * 1") echo "mode=edgar-broad-backfill"   >> $GITHUB_OUTPUT ;;
+            "0 13 * * 1")  echo "mode=edgar-targeted-backfill" >> $GITHUB_OUTPUT ;;
+            "30 13 * * 1") echo "mode=techcrunch-backfill"    >> $GITHUB_OUTPUT ;;
+            "0 14 * * 1")  echo "mode=ph-backfill"            >> $GITHUB_OUTPUT ;;
+            "30 14 * * 1") echo "mode=signalbase"             >> $GITHUB_OUTPUT ;;
             *)             echo "mode=${{ github.event.inputs.mode || 'daily' }}" >> $GITHUB_OUTPUT ;;
           esac
 

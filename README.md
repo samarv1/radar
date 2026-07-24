@@ -107,8 +107,9 @@ The frontend is a Next.js app (`web/`) that reads directly from the same Postgre
 The pipeline runs automatically via GitHub Actions:
 
 - **Daily (7am UTC):** EDGAR → CIK lookup → cross-reference → careers (EDGAR-matched) → a16z Build newsletter → YC hiring signal → careers sweep (new companies only) → Product Hunt → TechCrunch → Signalbase → standalone validation → EDGAR enrichment
-- **Weekly (Monday):** Re-scrapes all accelerator directories (YC, a16z, Sequoia, Lightspeed, Pear, Techstars) + 30-day careers rescrape + full PH backfill + full Signalbase backfill (180 days)
-- **Monday 12pm UTC:** Standalone 30-day careers rescrape (all accelerator companies, stale > 30 days)
+- **Monday (8am–2:30pm UTC), one step per 30-min slot:** accelerator directories (YC, a16z, Sequoia, Lightspeed, Pear, Techstars) → careers 30-day rescrape (capped at 500/run) → EDGAR broad backfill (180d) → EDGAR targeted backfill (180d) → TechCrunch backfill (180d) → Product Hunt backfill (30d — PH's own rate limit makes a full 180-day sweep infeasible) → Signalbase backfill (180d)
+
+Each Monday step is its own cron/job so it stays under the 30-min job timeout; there's no single scheduled "weekly" run — `mode=weekly` (all of the above plus `run_daily()`) exists for manual/local use only, since it runs well past 30 minutes end to end.
 
 To trigger a run manually:
 ```bash
@@ -116,6 +117,10 @@ gh workflow run pipeline.yml -f mode=daily
 gh workflow run pipeline.yml -f mode=weekly
 gh workflow run pipeline.yml -f mode=careers-rescrape
 gh workflow run pipeline.yml -f mode=signalbase
+gh workflow run pipeline.yml -f mode=edgar-broad-backfill
+gh workflow run pipeline.yml -f mode=edgar-targeted-backfill
+gh workflow run pipeline.yml -f mode=techcrunch-backfill
+gh workflow run pipeline.yml -f mode=ph-backfill
 # or: yc, a16z, sequoia, lightspeed, pear, techstars
 ```
 

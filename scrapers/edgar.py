@@ -11,8 +11,10 @@ Usage:
 
 import re
 import sys
+import threading
 import time
 import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, timedelta, datetime
 
 import requests
@@ -408,15 +410,96 @@ def scrape_chunked(days_back: int = 180, chunk_days: int = 30, limit_per_chunk: 
     print(f"\nChunked scan complete. inserted={total_inserted}, dupes={total_dupes}, excluded={total_excluded}, failed={total_failed}")
 
 
-def scrape_targeted(days_back: int = 180):
+_targeted_print_lock = threading.Lock()
+
+SUBMISSIONS = "https://data.sec.gov/submissions/CIK{cik}.json"
+
+
+def _targeted_one(acc_id: int, name: str, cik: str, cutoff: date) -> tuple[int, int, int]:
+    """Fetch one company's filing history and upsert any Form D within cutoff.
+    Returns (inserted, skipped, failed)."""
+    cik_padded = cik.zfill(10)
+    url = SUBMISSIONS.format(cik=cik_padded)
+
+    try:
+        resp = requests.get(url, headers=HEADERS, timeout=20)
+        time.sleep(SLEEP)
+        if resp.status_code != 200:
+            return 0, 0, 1
+        data = resp.json()
+    except Exception as e:
+        with _targeted_print_lock:
+            print(f"  [{name}] fetch error: {e}")
+        return 0, 0, 1
+
+    filings = data.get("filings", {}).get("recent", {})
+    if not filings:
+        return 0, 0, 0
+
+    forms = filings.get("form", [])
+    dates = filings.get("filingDate", [])
+    accessions = filings.get("accessionNumber", [])
+
+    inserted = skipped = 0
+    conn = get_connection()
+    try:
+        for form, filed_str, accession_no in zip(forms, dates, accessions):
+            if form not in ("D", "D/A"):
+                continue
+            try:
+                filed = datetime.strptime(filed_str, "%Y-%m-%d").date()
+            except ValueError:
+                continue
+            if filed < cutoff:
+                continue
+
+            # Normalize accession: add dashes if missing
+            accession_no = accession_no.replace("-", "")
+            accession_no = f"{accession_no[:10]}-{accession_no[10:12]}-{accession_no[12:]}"
+
+            # Fetch XML for this filing
+            xml_text, raw_url = fetch_primary_xml(cik, accession_no)
+            if not xml_text:
+                continue
+
+            parsed = parse_form_d_xml(xml_text)
+            if is_excluded_by_xml(parsed):
+                continue
+
+            filing_row = _build_filing_row(parsed, name, accession_no, filed_str, raw_url, accelerator_id=acc_id)
+
+            if upsert_filing(conn, filing_row):
+                inserted += 1
+                with _targeted_print_lock:
+                    print(f"  [{name}] NEW filing {accession_no} filed {filed_str} amount={parsed.get('amount_raised')}")
+            else:
+                # Update accelerator_id on existing record if not set
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "UPDATE edgar_filings SET accelerator_id = %s WHERE accession_number = %s AND accelerator_id IS NULL",
+                        (acc_id, accession_no),
+                    )
+                skipped += 1
+
+            conn.commit()
+    finally:
+        conn.close()
+
+    return inserted, skipped, 0
+
+
+def scrape_targeted(days_back: int = 180, workers: int = 4):
     """
     Targeted mode: for each accelerator_company with a known CIK, fetch
     their filing history from data.sec.gov and upsert any Form D filings
     from the last `days_back` days. Much faster than the broad scan and
     surgically accurate — no fuzzy matching needed.
+
+    Parallelized across `workers` threads — each does its own request + a
+    SLEEP pause, so throughput stays well under SEC's 10 req/s fair-access
+    limit (workers=4 keeps it in the ~7 req/s range).
     """
     cutoff = date.today() - timedelta(days=days_back)
-    SUBMISSIONS = "https://data.sec.gov/submissions/CIK{cik}.json"
 
     conn = get_connection()
     try:
@@ -425,75 +508,19 @@ def scrape_targeted(days_back: int = 180):
                 "SELECT id, name, edgar_cik FROM accelerator_companies WHERE edgar_cik IS NOT NULL ORDER BY id"
             )
             companies = cur.fetchall()
-
-        print(f"Targeted scan: {len(companies)} companies with known CIKs (cutoff {cutoff})")
-        inserted = updated = skipped = failed = 0
-
-        for i, (acc_id, name, cik) in enumerate(companies):
-            cik_padded = cik.zfill(10)
-            url = SUBMISSIONS.format(cik=cik_padded)
-
-            try:
-                resp = requests.get(url, headers=HEADERS, timeout=20)
-                time.sleep(SLEEP)
-                if resp.status_code != 200:
-                    failed += 1
-                    continue
-                data = resp.json()
-            except Exception as e:
-                print(f"  [{name}] fetch error: {e}")
-                failed += 1
-                continue
-
-            filings = data.get("filings", {}).get("recent", {})
-            if not filings:
-                continue
-
-            forms = filings.get("form", [])
-            dates = filings.get("filingDate", [])
-            accessions = filings.get("accessionNumber", [])
-
-            for form, filed_str, accession_no in zip(forms, dates, accessions):
-                if form not in ("D", "D/A"):
-                    continue
-                try:
-                    filed = datetime.strptime(filed_str, "%Y-%m-%d").date()
-                except ValueError:
-                    continue
-                if filed < cutoff:
-                    continue
-
-                # Normalize accession: add dashes if missing
-                accession_no = accession_no.replace("-", "")
-                accession_no = f"{accession_no[:10]}-{accession_no[10:12]}-{accession_no[12:]}"
-
-                # Fetch XML for this filing
-                xml_text, raw_url = fetch_primary_xml(cik, accession_no)
-                if not xml_text:
-                    continue
-
-                parsed = parse_form_d_xml(xml_text)
-                if is_excluded_by_xml(parsed):
-                    continue
-
-                filing_row = _build_filing_row(parsed, name, accession_no, filed_str, raw_url, accelerator_id=acc_id)
-
-                if upsert_filing(conn, filing_row):
-                    inserted += 1
-                    print(f"  [{name}] NEW filing {accession_no} filed {filed_str} amount={parsed.get('amount_raised')}")
-                else:
-                    # Update accelerator_id on existing record if not set
-                    with conn.cursor() as cur:
-                        cur.execute(
-                            "UPDATE edgar_filings SET accelerator_id = %s WHERE accession_number = %s AND accelerator_id IS NULL",
-                            (acc_id, accession_no),
-                        )
-                    skipped += 1
-
-                conn.commit()
-
     finally:
         conn.close()
+
+    print(f"Targeted scan: {len(companies)} companies with known CIKs (cutoff {cutoff}, workers={workers})")
+    inserted = skipped = failed = 0
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = [executor.submit(_targeted_one, acc_id, name, cik, cutoff) for acc_id, name, cik in companies]
+        for future in as_completed(futures):
+            i, s, f = future.result()
+            inserted += i
+            skipped += s
+            failed += f
 
     print(f"\nTargeted scan done. New filings: {inserted}, Already known: {skipped}, Failed: {failed}")
 

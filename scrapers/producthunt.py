@@ -122,11 +122,17 @@ def fetch_launches(token: str, days_back: int) -> list[dict]:
         edges = posts.get("edges", [])
         page_info = posts.get("pageInfo", {})
 
+        below_threshold = False
         for edge in edges:
             node = edge.get("node", {})
             votes = node.get("votesCount", 0)
             if votes < MIN_VOTES:
-                continue
+                # Results are ordered by VOTES descending, so once we hit one
+                # below the threshold every remaining post (this page and all
+                # later pages) is too — stop paginating instead of scanning
+                # the entire date window.
+                below_threshold = True
+                break
 
             makers = node.get("makers", [])
             maker = makers[0] if makers else {}
@@ -149,7 +155,7 @@ def fetch_launches(token: str, days_back: int) -> list[dict]:
 
         print(f"  Page {page}: fetched {len(edges)} posts, kept {len(launches)} total (>={MIN_VOTES} votes)")
 
-        if not page_info.get("hasNextPage"):
+        if below_threshold or not page_info.get("hasNextPage"):
             break
         cursor = page_info.get("endCursor")
 
