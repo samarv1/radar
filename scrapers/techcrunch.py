@@ -25,7 +25,7 @@ from db.connection import get_connection
 
 WP_API = "https://techcrunch.com/wp-json/wp/v2/posts"
 VENTURE_CATEGORY = 577030455
-HEADERS = {"User-Agent": "startup-recruiting-tool contact@example.com"}
+HEADERS = {"User-Agent": "radar-tool contact@example.com"}
 SLEEP = 0.3
 
 FUNDING_KEYWORDS = re.compile(

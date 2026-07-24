@@ -1,4 +1,4 @@
-# Startup Sourcing Tool
+# Radar
 
 A data pipeline that helps students find recently funded startups *before* they post jobs.
 

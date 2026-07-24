@@ -22,7 +22,7 @@ from db.connection import get_connection
 
 LISTING_URL = "https://lsvp.com/companies/"
 SITEMAP_URL = "https://lsvp.com/company-sitemap.xml"
-HEADERS = {"User-Agent": "startup-recruiting-tool contact@example.com"}
+HEADERS = {"User-Agent": "radar-tool contact@example.com"}
 SLEEP = 0.4
 
 

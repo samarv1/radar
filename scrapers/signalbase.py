@@ -27,7 +27,7 @@ from db.connection import get_connection
 
 SITEMAP_BASE = "https://www.trysignalbase.com/sitemap/{}"
 SITEMAP_COUNT = 7
-HEADERS = {"User-Agent": "startup-recruiting-tool contact@example.com"}
+HEADERS = {"User-Agent": "radar-tool contact@example.com"}
 SLEEP = 0.2   # per-worker sleep; with DEFAULT_WORKERS=10 this is ~2 req/s per worker
 DEFAULT_WORKERS = 10
 

@@ -23,7 +23,7 @@ from db.connection import get_connection
 
 BASE_URL = "https://www.sequoiacap.com/our-companies/"
 WP_API = "https://sequoiacap.com/wp-json/wp/v2/company"
-HEADERS = {"User-Agent": "startup-recruiting-tool contact@example.com"}
+HEADERS = {"User-Agent": "radar-tool contact@example.com"}
 SLEEP = 0.4
 
 # Stages we care about — exclude large exits and very old investments

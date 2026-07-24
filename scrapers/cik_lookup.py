@@ -27,7 +27,7 @@ from db.connection import get_connection
 
 EFTS = "https://efts.sec.gov/LATEST/search-index"
 HEADERS = {
-    "User-Agent": "startup-recruiting-tool contact@example.com",
+    "User-Agent": "radar-tool contact@example.com",
     "Accept-Encoding": "gzip, deflate",
 }
 SLEEP = 0.2

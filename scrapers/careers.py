@@ -27,7 +27,7 @@ from db.connection import get_connection
 _print_lock = threading.Lock()
 _ashby_semaphore = threading.Semaphore(3)  # max 3 concurrent Ashby calls
 
-HEADERS = {"User-Agent": "startup-recruiting-tool contact@example.com"}
+HEADERS = {"User-Agent": "radar-tool contact@example.com"}
 SLEEP = 0.3
 
 _REAL_ATS = frozenset({"greenhouse", "lever", "ashby", "workable", "bamboohr"})

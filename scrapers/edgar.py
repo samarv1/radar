@@ -26,7 +26,7 @@ EFTS_SEARCH = "https://efts.sec.gov/LATEST/search-index"
 EDGAR_ARCHIVES = "https://www.sec.gov/Archives/edgar/data"
 
 HEADERS = {
-    "User-Agent": "startup-recruiting-tool contact@example.com",
+    "User-Agent": "radar-tool contact@example.com",
     "Accept-Encoding": "gzip, deflate",
 }
 

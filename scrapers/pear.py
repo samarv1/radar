@@ -17,7 +17,7 @@ sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.dirname(_
 from db.connection import get_connection
 
 BASE = "https://pear.vc/wp-json/wp/v2/pear_vc_company"
-HEADERS = {"User-Agent": "startup-recruiting-tool contact@example.com"}
+HEADERS = {"User-Agent": "radar-tool contact@example.com"}
 PER_PAGE = 100
 SLEEP = 0.3
 

@@ -20,7 +20,7 @@ sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.dirname(_
 from db.connection import get_connection
 
 PORTFOLIO_URL = "https://a16z.com/portfolio/"
-HEADERS = {"User-Agent": "startup-recruiting-tool contact@example.com"}
+HEADERS = {"User-Agent": "radar-tool contact@example.com"}
 SLEEP = 1.0
 
 # Stages to exclude — these are exits, not potential employers

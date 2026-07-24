@@ -24,7 +24,7 @@ sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.dirname(_
 from db.connection import get_connection
 
 HEADERS = {
-    "User-Agent": "startup-recruiting-tool contact@example.com",
+    "User-Agent": "radar-tool contact@example.com",
     "Accept-Encoding": "gzip, deflate",
 }
 SLEEP = 0.15
