@@ -4,6 +4,9 @@ Enrich accelerator_companies.website for Lightspeed and Sequoia.
 Neither scraper captures the company website URL during the main directory scrape.
 This script visits each company's detail page and extracts the external website link.
 
+Manual one-off — not part of the automated pipeline (main.py). Run by hand after
+scraping Lightspeed/Sequoia.
+
 Lightspeed: <a id="company_url" href="https://...">
 Sequoia:    <a class="button button--outline-light button--small" target="_blank" href="https://...">
 

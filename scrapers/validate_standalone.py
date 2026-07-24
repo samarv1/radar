@@ -4,6 +4,9 @@ Sets standalone_source on edgar_filings rows that have no accelerator_id but
 appear in funding_news (TechCrunch) or ph_launches (Product Hunt ≥50 votes).
 TechCrunch takes priority when both match.
 
+Pipeline step, called from main.py — not to be confused with root validate.py,
+which is a manual data-quality report.
+
 Usage:
     uv run python scrapers/validate_standalone.py
 """

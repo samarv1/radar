@@ -4,6 +4,9 @@ Data quality validation report for Phase 1 pipeline.
 Prints a structured report covering accelerator companies, EDGAR filings,
 and cross-reference match quality.
 
+Manual report, run by hand — not to be confused with scrapers/validate_standalone.py,
+which is a pipeline step that tags unmatched EDGAR filings.
+
 Usage:
     uv run python validate.py
 """

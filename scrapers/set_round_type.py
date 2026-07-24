@@ -1,6 +1,8 @@
 """
 Manually set round_type for a company by name.
 
+Manual one-off — not part of the automated pipeline (main.py).
+
 Usage:
     uv run python scrapers/set_round_type.py "Blacksmith" "Series B"
     uv run python scrapers/set_round_type.py "Phonely" "Series A"

@@ -11,3 +11,4 @@ CLAUDE.md
 startup_sourcing_tool_spec.md
 .vercel
 .env*
+*.db
