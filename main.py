@@ -121,7 +121,10 @@ SCRAPERS = {
     "lightspeed": scrape_lightspeed,
     "pear":      scrape_pear,
     "techstars": scrape_techstars,
-    "careers-rescrape": lambda: scrape_careers(hiring_sweep=True, workers=12),
+    # Capped like the daily hiring sweep: the full cohort had grown past what
+    # fits in the 30-min job timeout, so this drains the backlog over multiple
+    # weekly runs instead of trying everything at once (see July 20 2026 timeout).
+    "careers-rescrape": lambda: scrape_careers(hiring_sweep=True, workers=12, limit=500),
     "signalbase": lambda: scrape_signalbase(days_back=180, workers=20),
 }
 
