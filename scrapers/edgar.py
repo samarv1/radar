@@ -185,6 +185,7 @@ def parse_form_d_xml(xml_text: str) -> dict:
     result = {
         "company_name": None,
         "state": None,
+        "city": None,
         "date_of_first_sale": None,
         "amount_raised": None,
         "industry_group": None,
@@ -202,6 +203,7 @@ def parse_form_d_xml(xml_text: str) -> dict:
 
         result["company_name"] = find_text("nameOfIssuer", "issuerName", "entityName")
         result["state"] = find_text("stateOrCountryDescription", "stateOfFormation", "stateOrCountry")
+        result["city"] = find_text("issuerAddress/city")
         # dateOfFirstSale is a container: <dateOfFirstSale><value>YYYY-MM-DD</value></dateOfFirstSale>
         result["date_of_first_sale"] = find_text("dateOfFirstSale/value", "firstSaleDate")
         result["entity_type"] = find_text("entityType", "issuerEntityType")
@@ -250,6 +252,7 @@ def _build_filing_row(
     return {
         "company_name": parsed["company_name"] or entity_name,
         "state": parsed.get("state") or inc_state,
+        "city": parsed.get("city"),
         "date_filed": file_date or None,
         "date_of_first_sale": date_of_first_sale,
         "amount_raised": parsed.get("amount_raised"),
@@ -264,10 +267,10 @@ def _build_filing_row(
 def upsert_filing(conn, filing: dict) -> bool:
     sql = """
         INSERT INTO edgar_filings
-            (company_name, state, date_filed, date_of_first_sale, amount_raised,
+            (company_name, state, city, date_filed, date_of_first_sale, amount_raised,
              industry_group, entity_type, accession_number, raw_url, accelerator_id)
         VALUES
-            (%(company_name)s, %(state)s, %(date_filed)s, %(date_of_first_sale)s,
+            (%(company_name)s, %(state)s, %(city)s, %(date_filed)s, %(date_of_first_sale)s,
              %(amount_raised)s, %(industry_group)s, %(entity_type)s,
              %(accession_number)s, %(raw_url)s, %(accelerator_id)s)
         ON CONFLICT (accession_number) DO NOTHING

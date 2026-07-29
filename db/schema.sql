@@ -13,6 +13,10 @@ CREATE TABLE IF NOT EXISTS accelerator_companies (
     jobs_url TEXT,                   -- careers page if known (Pear provides this)
     is_excluded BOOLEAN NOT NULL DEFAULT FALSE,
     yc_is_hiring BOOLEAN NOT NULL DEFAULT FALSE,
+    hq_city TEXT,
+    hq_state TEXT,
+    hq_country TEXT,
+    location_tag TEXT,                -- 'bay_area', 'new_york', 'other_usa', 'international', 'unknown'
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -33,6 +37,7 @@ CREATE TABLE IF NOT EXISTS edgar_filings (
     investor_count INT,                  -- totalNumberAlreadyInvested from Form D XML
     vc_firm_signal TEXT,                 -- VC firm name if found in director/promoter relationship clarifications
     offering_name TEXT,                  -- nameOfOffering from Form D XML (e.g. "Series A Preferred Stock")
+    city TEXT,                           -- issuerAddress city from Form D XML
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -83,3 +88,8 @@ CREATE INDEX IF NOT EXISTS idx_funding_news_accelerator ON funding_news(accelera
 -- IF NOT EXISTS statements backfill any columns the live DB is missing.
 ALTER TABLE edgar_filings ADD COLUMN IF NOT EXISTS offering_name TEXT;
 ALTER TABLE funding_news ADD COLUMN IF NOT EXISTS industry TEXT;
+ALTER TABLE edgar_filings ADD COLUMN IF NOT EXISTS city TEXT;
+ALTER TABLE accelerator_companies ADD COLUMN IF NOT EXISTS hq_city TEXT;
+ALTER TABLE accelerator_companies ADD COLUMN IF NOT EXISTS hq_state TEXT;
+ALTER TABLE accelerator_companies ADD COLUMN IF NOT EXISTS hq_country TEXT;
+ALTER TABLE accelerator_companies ADD COLUMN IF NOT EXISTS location_tag TEXT;

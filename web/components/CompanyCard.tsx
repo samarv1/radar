@@ -43,6 +43,13 @@ const SOURCE_LABELS: Record<string, string> = {
   techstars: "Techstars",
 };
 
+const LOCATION_LABELS: Record<string, string> = {
+  bay_area: "Bay Area",
+  new_york: "New York",
+  other_usa: "Other USA",
+  international: "International",
+};
+
 function formatAmount(n: number | null): string | null {
   if (n === null || n < 10_000) return null;
   if (n >= 1_000_000_000) return `$${(n / 1_000_000_000).toFixed(1).replace(/\.0$/, "")}B`;
@@ -62,6 +69,7 @@ function OpenRoles({ company, hiringMode }: { company: Company; hiringMode: bool
   if (!hiringMode && company.amount_raised === null && company.careers_url) {
     return (
       <div className="flex items-baseline gap-1.5 text-xs text-muted-foreground pt-1">
+        <span className="shrink-0">Open roles</span>
         <a href={company.careers_url} target="_blank" rel="noopener noreferrer" className="relative z-10 hover:opacity-70 transition-opacity font-medium text-green-600">
           apply ↗
         </a>
@@ -117,15 +125,12 @@ export function CompanyCard({
   const verticals = getVerticals(company.tags);
   const roundLabel = hiringMode ? null : (company.round_type ?? null);
   const accelBadges = (company.accelerators ?? [company.accelerator]).filter(a => SOURCE_LABELS[a]);
+  const locationLabel = company.location_tag ? LOCATION_LABELS[company.location_tag] : null;
   const showAccelRow = accelBadges.length > 0 || (!hideBatch && !!company.batch);
-  // Each variable row contributes (2px space-y margin + height)px to the left column.
-  // accel row: 22px, chips row: 26px, openRoles row: always 22px. Target = 70px.
-  // Spacer itself gets 2px margin-top, so spacerH = target - present rows - 2.
-  const spacerH = Math.max(0, 70 - (showAccelRow ? 22 : 0) - (verticals.length > 0 ? 26 : 0) - 22 - 2);
 
   return (
     <Card className={`relative transition-shadow ${company.website ? "hover:shadow-md" : ""}`}>
-      <CardHeader className="pb-8">
+      <CardHeader className="pb-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 space-y-0.5">
             <p className="text-base font-semibold leading-tight">
@@ -140,29 +145,41 @@ export function CompanyCard({
                 </a>
               ) : company.name}
             </p>
-            {showAccelRow && (
-              <div className="flex items-center gap-1.5 flex-wrap">
-                {accelBadges.map((a) => (
-                  <span key={a} className="text-xs font-medium text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
-                    {SOURCE_LABELS[a]}
+            {/* Fixed min-height (measured worst case: accel row 20px + verticals row
+                24px + location row 20px + open-roles row 20px) instead of a hand-summed
+                spacer, so card height stays constant regardless of which rows a given
+                company actually has — verified against live DOM measurements in Chrome. */}
+            <div className="min-h-[84px]">
+              {showAccelRow && (
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {accelBadges.map((a) => (
+                    <span key={a} className="text-xs font-medium text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
+                      {SOURCE_LABELS[a]}
+                    </span>
+                  ))}
+                  {!hideBatch && company.batch && (
+                    <span className="text-xs text-muted-foreground">{company.batch}</span>
+                  )}
+                </div>
+              )}
+              {verticals.length > 0 && (
+                <div className="flex flex-wrap gap-1 pt-1">
+                  {verticals.map((v) => (
+                    <span key={v} className="text-xs text-blue-600 bg-blue-50 dark:text-blue-400 dark:bg-blue-950/50 px-1.5 py-0.5 rounded">
+                      {VERTICAL_LABELS[v]}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {locationLabel && (
+                <div className="flex flex-wrap gap-1 pt-1">
+                  <span className="text-xs text-rose-500 bg-rose-50/60 dark:text-rose-300 dark:bg-rose-950/30 px-1.5 py-0.5 rounded">
+                    {locationLabel}
                   </span>
-                ))}
-                {!hideBatch && company.batch && (
-                  <span className="text-xs text-muted-foreground">{company.batch}</span>
-                )}
-              </div>
-            )}
-            {verticals.length > 0 && (
-              <div className="flex flex-wrap gap-1 pt-1">
-                {verticals.map((v) => (
-                  <span key={v} className="text-xs text-blue-600 bg-blue-50 dark:text-blue-400 dark:bg-blue-950/50 px-1.5 py-0.5 rounded">
-                    {VERTICAL_LABELS[v]}
-                  </span>
-                ))}
-              </div>
-            )}
-            <OpenRoles company={company} hiringMode={hiringMode} />
-            {spacerH > 0 && <div style={{ height: spacerH }} />}
+                </div>
+              )}
+              <OpenRoles company={company} hiringMode={hiringMode} />
+            </div>
           </div>
 
           <div className="text-right shrink-0">

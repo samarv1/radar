@@ -11,12 +11,14 @@ weekly           : all of the above + YC + all accelerator directories + 180-day
 
 import argparse
 
+from db.connection import apply_schema
 from scrapers.a16z import scrape as scrape_a16z
 from scrapers.a16z_build import scrape as scrape_a16z_build
 from scrapers.careers import scrape as scrape_careers
 from scrapers.cik_lookup import run as run_cik_lookup
 from scrapers.cross_reference import run as run_cross_reference
 from scrapers.edgar import scrape as scrape_edgar, scrape_chunked as scrape_edgar_chunked, scrape_targeted as scrape_edgar_targeted
+from scrapers.enrich_location import run as run_enrich_location
 from scrapers.lightspeed import scrape as scrape_lightspeed
 from scrapers.pear import scrape as scrape_pear
 from scrapers.producthunt import scrape as scrape_ph
@@ -100,6 +102,9 @@ def run_weekly():
     # from the EDGAR submissions API — bypasses the broad scan's 10k pagination limit.
     scrape_edgar_targeted(days_back=180)
 
+    print("\n=== HQ location enrichment (non-YC/Techstars, via matched EDGAR filings) ===")
+    run_enrich_location()
+
     print("\n=== Careers (accelerator companies — overlay refresh, no limit) ===")
     # Weekly runs the full cohort without a cap: known-ATS companies are cheap (1 request each),
     # not_found companies re-discover only if >75 days stale.
@@ -152,6 +157,13 @@ if __name__ == "__main__":
         ),
     )
     args = parser.parse_args()
+
+    # Applied unconditionally, before any mode branch, so every invocation
+    # path (single scraper, daily, or weekly) is always guaranteed to run
+    # against a schema that's up to date — see July 28 2026 incident where
+    # a new column was referenced before prod had been migrated.
+    print("=== Schema ===")
+    apply_schema()
 
     if args.mode in SCRAPERS:
         SCRAPERS[args.mode]()

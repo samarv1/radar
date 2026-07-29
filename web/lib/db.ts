@@ -62,6 +62,7 @@ export type Company = {
   intern_count: number;
   new_grad_count: number;
   tags: string[] | null;
+  location_tag: string | null;
 };
 
 
@@ -90,6 +91,7 @@ export async function getHiringFeed(): Promise<Company[]> {
         COALESCE(h.other, 0)::int    AS other_count,
         COALESCE(h.intern, 0)::int   AS intern_count,
         COALESCE(h.new_grad, 0)::int AS new_grad_count,
+        a.location_tag,
         h.latest_posted_at, h.latest_first_seen_at, h.latest_scraped_at
       FROM accelerator_companies a
       LEFT JOIN accel_meta am
@@ -166,7 +168,8 @@ export async function getFeed(): Promise<Company[]> {
           COALESCE(h.other, 0)::int   AS other_count,
           0::int AS intern_count,
           0::int AS new_grad_count,
-          a.tags
+          a.tags,
+          a.location_tag
         FROM accelerator_companies a
         JOIN edgar_filings e ON e.accelerator_id = a.id
         LEFT JOIN accel_meta am
@@ -231,7 +234,8 @@ export async function getFeed(): Promise<Company[]> {
           WHEN 'Other Banking and Financial Services' THEN ARRAY['fintech']
           WHEN 'Manufacturing'                       THEN ARRAY['hardware']
           ELSE NULL::text[]
-        END AS tags
+        END AS tags,
+        NULL::text AS location_tag
       FROM edgar_filings ef
       LEFT JOIN LATERAL (
         SELECT website, round_type FROM funding_news
@@ -302,7 +306,8 @@ export async function getFeed(): Promise<Company[]> {
           WHEN fn.industry ILIKE '%tech%' OR fn.industry ILIKE '%software%'
             THEN ARRAY['saas']
           ELSE NULL::text[]
-        END AS tags
+        END AS tags,
+        NULL::text AS location_tag
       FROM funding_news fn
       LEFT JOIN company_careers cc ON cc.website = fn.website
       WHERE fn.accelerator_id IS NULL
@@ -364,7 +369,8 @@ export async function getFeed(): Promise<Company[]> {
         COALESCE(h.other, 0)::int   AS other_count,
         0::int AS intern_count,
         0::int AS new_grad_count,
-        a.tags
+        a.tags,
+        a.location_tag
       FROM accelerator_companies a
       JOIN funding_news fn ON fn.accelerator_id = a.id
       LEFT JOIN (${JOB_COUNTS_BASIC}) h ON h.company_id = a.id

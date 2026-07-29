@@ -79,6 +79,8 @@ function applyFilters(companies: Company[], f: Filters): Company[] {
 
     if (f.rounds.length > 0 && !f.rounds.includes(normalizeRoundType(c.round_type))) return false;
 
+    if (f.locations.length > 0 && !f.locations.includes(c.location_tag ?? "unknown")) return false;
+
     return true;
   });
 }

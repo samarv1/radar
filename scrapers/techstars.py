@@ -15,7 +15,8 @@ import time
 import requests
 
 sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.dirname(__file__)))
-from db.connection import get_connection
+from db.connection import apply_schema, get_connection
+from scrapers.location import classify_location
 
 TYPESENSE_URL = "https://8gbms7c94riane0lp-1.a1.typesense.net"
 TYPESENSE_KEY = "0QKFSu4mIDX9UalfCNQN4qjg2xmukDE0"
@@ -63,14 +64,20 @@ def fetch_all(filter_by: str) -> list[dict]:
 def upsert_company(conn, row: dict) -> bool:
     sql = """
         INSERT INTO accelerator_companies
-            (name, website, accelerator, batch, description, tags, source_url)
+            (name, website, accelerator, batch, description, tags, source_url,
+             hq_city, hq_state, hq_country, location_tag)
         VALUES
-            (%(name)s, %(website)s, 'techstars', %(batch)s, %(description)s, %(tags)s, %(source_url)s)
+            (%(name)s, %(website)s, 'techstars', %(batch)s, %(description)s, %(tags)s, %(source_url)s,
+             %(hq_city)s, %(hq_state)s, %(hq_country)s, %(location_tag)s)
         ON CONFLICT (source_url) DO UPDATE SET
             name        = EXCLUDED.name,
             website     = EXCLUDED.website,
             batch       = EXCLUDED.batch,
             tags        = EXCLUDED.tags,
+            hq_city     = EXCLUDED.hq_city,
+            hq_state    = EXCLUDED.hq_state,
+            hq_country  = EXCLUDED.hq_country,
+            location_tag = EXCLUDED.location_tag,
             updated_at  = NOW()
         RETURNING (xmax = 0) AS inserted
     """
@@ -81,6 +88,9 @@ def upsert_company(conn, row: dict) -> bool:
 
 
 def scrape(min_year: int = 2018, all_countries: bool = False):
+    print("Applying DB schema...")
+    apply_schema()
+
     filter_parts = ["is_accelerator_company:true"]
     if not all_countries:
         filter_parts.append("country:United States")
@@ -110,6 +120,11 @@ def scrape(min_year: int = 2018, all_countries: bool = False):
             programs = c.get("program_names", [])
             batch = str(year) if year else None
 
+            hq_city = c.get("city") or None
+            hq_state = c.get("state_province") or None
+            hq_country = c.get("country") or None
+            location_tag = classify_location(hq_city, hq_state, hq_country)
+
             row = {
                 "name": name,
                 "website": f"https://{website}" if website and not website.startswith("http") else website,
@@ -117,6 +132,10 @@ def scrape(min_year: int = 2018, all_countries: bool = False):
                 "description": programs[0] if programs else None,
                 "tags": tags or None,
                 "source_url": f"https://www.techstars.com/portfolio#{company_id}",
+                "hq_city": hq_city,
+                "hq_state": hq_state,
+                "hq_country": hq_country,
+                "location_tag": location_tag,
             }
 
             is_new = upsert_company(conn, row)

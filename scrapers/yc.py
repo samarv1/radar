@@ -15,6 +15,7 @@ import requests
 
 sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.dirname(__file__)))
 from db.connection import apply_schema, get_connection
+from scrapers.location import classify_location, parse_yc_all_locations
 
 ALGOLIA_APP_ID = "45BWZJ1SGC"
 ALGOLIA_API_KEY = "NzllNTY5MzJiZGM2OTY2ZTQwMDEzOTNhYWZiZGRjODlhYzVkNjBmOGRjNzJiMWM4ZTU0ZDlhYTZjOTJiMjlhMWFuYWx5dGljc1RhZ3M9eWNkYyZyZXN0cmljdEluZGljZXM9WUNDb21wYW55X3Byb2R1Y3Rpb24lMkNZQ0NvbXBhbnlfQnlfTGF1bmNoX0RhdGVfcHJvZHVjdGlvbiZ0YWdGaWx0ZXJzPSU1QiUyMnljZGNfcHVibGljJTIyJTVE"
@@ -57,7 +58,7 @@ def fetch_batch(batch: str) -> list[dict]:
             "hitsPerPage": 1000,
             "page": page,
             "filters": f'batch:"{batch}"',
-            "attributesToRetrieve": ["name", "batch", "one_liner", "website", "tags", "slug", "status"],
+            "attributesToRetrieve": ["name", "batch", "one_liner", "website", "tags", "slug", "status", "all_locations"],
         }
         resp = requests.post(ALGOLIA_URL, json=payload, headers=HEADERS, timeout=30)
         time.sleep(SLEEP)
@@ -87,9 +88,11 @@ def fetch_all_companies() -> list[dict]:
 def upsert_company(conn, row: dict) -> bool:
     sql = """
         INSERT INTO accelerator_companies
-            (name, website, accelerator, batch, description, tags, source_url, company_status)
+            (name, website, accelerator, batch, description, tags, source_url, company_status,
+             hq_city, hq_state, hq_country, location_tag)
         VALUES
-            (%(name)s, %(website)s, 'yc', %(batch)s, %(description)s, %(tags)s, %(source_url)s, %(company_status)s)
+            (%(name)s, %(website)s, 'yc', %(batch)s, %(description)s, %(tags)s, %(source_url)s, %(company_status)s,
+             %(hq_city)s, %(hq_state)s, %(hq_country)s, %(location_tag)s)
         ON CONFLICT (source_url) DO UPDATE SET
             name           = EXCLUDED.name,
             website        = EXCLUDED.website,
@@ -97,6 +100,10 @@ def upsert_company(conn, row: dict) -> bool:
             description    = EXCLUDED.description,
             tags           = EXCLUDED.tags,
             company_status = EXCLUDED.company_status,
+            hq_city        = EXCLUDED.hq_city,
+            hq_state       = EXCLUDED.hq_state,
+            hq_country     = EXCLUDED.hq_country,
+            location_tag   = EXCLUDED.location_tag,
             updated_at     = NOW()
         RETURNING (xmax = 0) AS inserted
     """
@@ -127,6 +134,12 @@ def scrape():
             if isinstance(tags, str):
                 tags = [tags]
 
+            hq_city, hq_state, hq_country = parse_yc_all_locations(hit.get("all_locations"))
+            location_tag = classify_location(hq_city, hq_state, hq_country)
+            if location_tag == "unknown":
+                # YC skews ~85% US — safe source-aware default when no location data is found.
+                location_tag = "other_usa"
+
             row = {
                 "name": hit["name"].strip(),
                 "website": (hit.get("website") or "").strip() or None,
@@ -135,6 +148,10 @@ def scrape():
                 "tags": tags,
                 "source_url": f"https://www.ycombinator.com/companies/{slug}",
                 "company_status": hit.get("status") or None,
+                "hq_city": hq_city,
+                "hq_state": hq_state,
+                "hq_country": hq_country,
+                "location_tag": location_tag,
             }
 
             is_new = upsert_company(conn, row)

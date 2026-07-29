@@ -11,6 +11,7 @@ export type Filters = {
   amounts: number[];
   verticals: string[];
   rounds: string[];
+  locations: string[];
 };
 
 export const DEFAULT_FILTERS: Filters = {
@@ -20,6 +21,7 @@ export const DEFAULT_FILTERS: Filters = {
   amounts: [],
   verticals: [],
   rounds: [],
+  locations: [],
 };
 
 export function normalizeRoundType(rt: string | null): string {
@@ -74,6 +76,14 @@ const VERTICAL_OPTIONS: [string, string][] = [
   ["consumer", "Consumer"],
   ["edtech", "EdTech"],
   ["hardware", "Hardware"],
+  ["unknown", "Unknown"],
+];
+
+export const LOCATION_OPTIONS: [string, string][] = [
+  ["bay_area", "Bay Area"],
+  ["new_york", "New York"],
+  ["other_usa", "Other USA"],
+  ["international", "International"],
   ["unknown", "Unknown"],
 ];
 
@@ -249,6 +259,14 @@ export function FilterBar({ filters, onChange }: Props) {
           values={filters.rounds}
           onChange={(v) => onChange({ ...filters, rounds: v })}
           options={ROUND_OPTIONS}
+        />
+      </FilterDropdown>
+
+      <FilterDropdown label="Location" activeCount={filters.locations.length}>
+        <CheckboxList
+          values={filters.locations}
+          onChange={(v) => onChange({ ...filters, locations: v })}
+          options={LOCATION_OPTIONS}
         />
       </FilterDropdown>
     </div>

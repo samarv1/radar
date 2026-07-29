@@ -173,6 +173,16 @@ STEPS = [
         "v15: funding_news.industry",
         "ALTER TABLE funding_news ADD COLUMN IF NOT EXISTS industry TEXT",
     ),
+    (
+        "v16: HQ location tag columns",
+        """
+        ALTER TABLE edgar_filings ADD COLUMN IF NOT EXISTS city TEXT;
+        ALTER TABLE accelerator_companies ADD COLUMN IF NOT EXISTS hq_city TEXT;
+        ALTER TABLE accelerator_companies ADD COLUMN IF NOT EXISTS hq_state TEXT;
+        ALTER TABLE accelerator_companies ADD COLUMN IF NOT EXISTS hq_country TEXT;
+        ALTER TABLE accelerator_companies ADD COLUMN IF NOT EXISTS location_tag TEXT;
+        """,
+    ),
 ]
 
 
