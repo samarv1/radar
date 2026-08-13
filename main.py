@@ -52,9 +52,6 @@ def run_daily():
     scrape_yc_hiring()
 
     print("\n=== Careers (accelerator companies — overlay refresh + new discovery) ===")
-    # Known-ATS companies: cheap 1-request refresh every 3 days.
-    # NULL companies: discovered once on pickup.
-    # not_found companies: re-discovery every 75 days.
     # Cap at 500/day so the step stays bounded; backlog drains over a few runs.
     scrape_careers(hiring_sweep=True, workers=12, limit=500)
 
@@ -129,18 +126,15 @@ SCRAPERS = {
     "lightspeed": scrape_lightspeed,
     "pear":      scrape_pear,
     "techstars": scrape_techstars,
-    # Capped like the daily hiring sweep: the full cohort had grown past what
-    # fits in the 30-min job timeout, so this drains the backlog over multiple
-    # weekly runs instead of trying everything at once (see July 20 2026 timeout).
+    # Capped like the daily hiring sweep: the full cohort outgrew the 30-min job
+    # timeout, so this drains the backlog across multiple weekly runs instead.
     "careers-rescrape": lambda: scrape_careers(hiring_sweep=True, workers=12, limit=500),
     "signalbase": lambda: scrape_signalbase(days_back=180, workers=20),
     "edgar-broad-backfill": lambda: scrape_edgar_chunked(days_back=180, chunk_days=30),
     "edgar-targeted-backfill": lambda: scrape_edgar_targeted(days_back=180),
     "techcrunch-backfill": lambda: scrape_techcrunch(days_back=180),
-    # 30-day safety net, not a full 180-day backfill — see July 23 2026 discussion:
-    # PH's own rate limit (6250 pts/window) makes a 180-day sweep infeasible even
-    # with the early-break-on-votes fix, and 180 days of PH signal is stale for
-    # this product's use case anyway. Daily already covers the last 2 days.
+    # 30-day safety net, not a full 180-day backfill: PH's rate limit makes that
+    # infeasible, and 180 days of PH signal is stale for this product anyway.
     "ph-backfill": lambda: scrape_ph(days_back=30),
 }
 
@@ -158,10 +152,8 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    # Applied unconditionally, before any mode branch, so every invocation
-    # path (single scraper, daily, or weekly) is always guaranteed to run
-    # against a schema that's up to date — see July 28 2026 incident where
-    # a new column was referenced before prod had been migrated.
+    # Unconditional, before any mode branch, so every invocation path
+    # always runs against a schema that's up to date.
     print("=== Schema ===")
     apply_schema()
 

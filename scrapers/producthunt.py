@@ -6,7 +6,7 @@ with >= MIN_VOTES upvotes launched in the last DAYS_BACK days, and upserts
 into ph_launches. Cross-references with accelerator_companies by website URL
 and fuzzy name match.
 
-Requires PH_API_TOKEN in .env (get one at producthunt.com/v2/oauth/applications).
+Requires PH_API_TOKEN in .env.
 
 Usage:
     uv run python scrapers/producthunt.py [--days 90] [--min-votes 50]

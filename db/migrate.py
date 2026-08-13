@@ -1,5 +1,5 @@
 """
-Runs all migrations (v2-v15) against the database in order.
+Runs all migrations (v2-v16) against the database in order.
 
 All migrations use `IF NOT EXISTS`-style DDL (or, for v12, a data-fix `UPDATE`
 that's a no-op on an empty table), so this is safe to run start-to-finish

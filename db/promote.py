@@ -75,7 +75,8 @@ def promote_accelerator_companies(src_conn, tgt_conn):
         cur.execute(f"SELECT id, {col_list} FROM {table}")
         rows = cur.fetchall()
 
-    source_url_idx = cols.index("source_url") + 1  # +1 for leading id column
+    # +1 for leading id column
+    source_url_idx = cols.index("source_url") + 1
     local_id_by_source_url = {row[source_url_idx]: row[0] for row in rows}
 
     inserted = 0

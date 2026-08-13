@@ -145,10 +145,8 @@ export function CompanyCard({
                 </a>
               ) : company.name}
             </p>
-            {/* Fixed min-height (measured worst case: accel row 20px + verticals row
-                24px + location row 20px + open-roles row 20px) instead of a hand-summed
-                spacer, so card height stays constant regardless of which rows a given
-                company actually has — verified against live DOM measurements in Chrome. */}
+            {/* min-h 84px = worst-case row stack (accel 20 + verticals 24 + location 20 +
+                open roles 20), so card height stays constant regardless of which rows render. */}
             <div className="min-h-[84px]">
               {showAccelRow && (
                 <div className="flex items-center gap-1.5 flex-wrap">

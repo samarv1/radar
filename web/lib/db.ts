@@ -16,7 +16,7 @@ const ACCEL_META_CTE = `
     GROUP BY 1
   )`;
 
-// Job counts with all categories + timing columns (used in hiring feed).
+// Job counts with all categories, plus timing columns for recency filtering and sorting.
 const JOB_COUNTS_FULL = `
   SELECT company_id,
     SUM(CASE WHEN category = 'engineering' THEN 1 ELSE 0 END) AS eng,
@@ -30,7 +30,7 @@ const JOB_COUNTS_FULL = `
     MAX(scraped_at)     AS latest_scraped_at
   FROM job_listings GROUP BY company_id`;
 
-// Job counts for the four main role categories only (used in raised feed).
+// Job counts for the four main role categories only, no timing columns.
 const JOB_COUNTS_BASIC = `
   SELECT company_id,
     SUM(CASE WHEN category = 'engineering' THEN 1 ELSE 0 END) AS eng,
