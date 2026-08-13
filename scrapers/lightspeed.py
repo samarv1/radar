@@ -72,7 +72,6 @@ def scrape():
     slugs = fetch_slugs_from_sitemap()
     print(f"  Found {len(slugs)} slugs")
 
-    # Build a name→slug map via normalized matching
     slug_map = {slug_to_name(s).lower(): s for s in slugs}
 
     conn = get_connection()

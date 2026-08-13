@@ -112,13 +112,11 @@ def upsert_company(conn, row: dict) -> bool:
 
 
 def scrape(min_year: int = 2018, all_stages: bool = False):
-    # Step 1: parse the HTML table for stage + year data
     print("Fetching Sequoia HTML table (stage + year data)...")
     table_data = parse_html_table()
     print(f"  Found {len(table_data)} companies with stage/year data")
     time.sleep(SLEEP)
 
-    # Step 2: get all company slugs from WP REST API
     wp_companies = fetch_all_companies_wp()
     print(f"  WP API returned {len(wp_companies)} companies")
 

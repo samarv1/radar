@@ -45,7 +45,6 @@ SPLIT_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Same verbs in hyphenated slug form for URL-based parsing
 SLUG_SPLIT_RE = re.compile(
     r"-(?:raises?|closes?|secures?|lands?|gets?|wins?|reportedly|has-raised|will-raise|announces?)-",
     re.IGNORECASE,
@@ -61,7 +60,6 @@ PUNCTUATION = re.compile(r"[^\w\s]")
 WHITESPACE = re.compile(r"\s+")
 
 
-# Domains that are media outlets, databases, or platforms — not company websites
 _SKIP_DOMAINS = re.compile(
     r"(bloomberg\.com|wsj\.com|reuters\.com|forbes\.com|nytimes\.com|"
     r"prnewswire\.com|businesswire\.com|crunchbase\.com|pitchbook\.com|"
@@ -97,7 +95,6 @@ class _FirstExternalLink(HTMLParser):
             ):
                 self._href = href
                 self._text = []
-                # Only treat as fallback if this is the very first external link seen.
                 if not self._first_external_seen and self.homepage_fallback is None:
                     from urllib.parse import urlparse
                     path = urlparse(href).path
@@ -116,7 +113,6 @@ class _FirstExternalLink(HTMLParser):
             _BAD_WORDS = {"announced", "launched", "raised", "said", "told",
                           "report", "source", "post", "release", "press",
                           "data", "research", "study", "according", "per"}
-            # Must start uppercase and contain no non-company verb/noun words
             if (text and text[0].isupper() and 1 <= len(words) <= 4
                     and not _BAD_WORDS.intersection(w.lower() for w in words)):
                 self.result = text
@@ -127,7 +123,6 @@ class _FirstExternalLink(HTMLParser):
 
 def parse_company_from_content(content_html: str) -> str | None:
     """Extract company name from first external hyperlink in article body."""
-    # Only scan the opening ~3000 chars (first few paragraphs)
     parser = _FirstExternalLink()
     parser.feed(html.unescape(content_html[:3000]))
     return parser.result
@@ -507,7 +502,6 @@ def backfill_round_types():
                     continue
                 post = data[0] if isinstance(data, list) else data
                 content_html = post.get("content", {}).get("rendered", "")
-                # Scan first ~1500 chars — round type is usually in the lede but sometimes paragraph 2-3
                 body_text = strip_tags(content_html[:1500])
                 # Only accept body-sourced round when it appears near a dollar amount.
                 # Title-sourced round is always trusted (already checked upstream).

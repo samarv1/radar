@@ -33,7 +33,6 @@ DEFAULT_WORKERS = 10
 
 SITEMAP_NS = "http://www.sitemaps.org/schemas/sitemap/0.9"
 
-# Title verbs used to split "Company Name Raises $X"
 TITLE_SPLIT_RE = re.compile(
     r"\s+(?:raises?|closes?|secures?|lands?|gets?|wins?|announces?|receives?|completes?|"
     r"nets?|bags?|attracts?|earns?|obtains?|clinches?)\b",
@@ -98,7 +97,6 @@ def parse_round(text: str) -> str | None:
         return "Pre-Seed"
     if r == "seed":
         return "Seed"
-    # "series a" → "Series A"
     letter = r[-1].upper()
     return f"Series {letter}"
 
@@ -168,7 +166,6 @@ def fetch_sitemap_urls(days_back: int) -> list[str]:
         added = len(funding_urls) - count_before
         print(f"  sitemap/{i}: {added} funding URLs in window (oldest lastmod: {oldest_in_sitemap})")
 
-        # If all entries in this sitemap are older than our cutoff, no need to continue
         if oldest_in_sitemap is not None and oldest_in_sitemap < cutoff:
             break
 
@@ -241,14 +238,11 @@ def parse_page(html: str, url: str) -> dict | None:
     # og:title: "Company Name Raises $X | Signalbase" or just "Company Name Raises $X"
     og_title_m = re.search(r'<meta property="og:title" content="([^"]+)"', html)
     og_title = html_lib.unescape(og_title_m.group(1)) if og_title_m else ""
-    # Strip " | Signalbase" suffix if present
     og_title = re.sub(r"\s*\|\s*Signalbase\s*$", "", og_title, flags=re.IGNORECASE).strip()
 
-    # description (og:description or name="description")
     desc_m = re.search(r'<meta name="description" content="([^"]+)"', html)
     description = html_lib.unescape(desc_m.group(1)) if desc_m else ""
 
-    # published_at from JSON-LD or article:published_time meta
     published_str = ld_data.get("datePublished") or ""
     if not published_str:
         pub_m = re.search(r'<meta property="article:published_time" content="([^"]+)"', html)
@@ -278,7 +272,6 @@ def parse_page(html: str, url: str) -> dict | None:
     if amount is not None and (amount < 50_000 or amount > 100_000_000):
         return None
 
-    # Round type: check title first, then description (description often has full text)
     round_type = parse_round(title) or parse_round(description)
     website = parse_company_website(html)
 

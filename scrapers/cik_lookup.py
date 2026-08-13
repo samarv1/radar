@@ -46,7 +46,7 @@ WHITESPACE = re.compile(r"\s+")
 
 
 def normalize(name: str) -> str:
-    name = TICKER.sub("", name)  # remove stock tickers before lowercasing
+    name = TICKER.sub("", name)
     name = name.lower()
     name = PUNCTUATION.sub(" ", name)
     name = LEGAL_SUFFIXES.sub(" ", name)

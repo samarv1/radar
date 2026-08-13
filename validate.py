@@ -36,7 +36,6 @@ def validate_accelerator_companies(conn):
         print("  (no data — run scrapers first)")
         return
 
-    # Breakdown by accelerator
     print("\nBy accelerator:")
     rows = query(conn, """
         SELECT accelerator, COUNT(*) AS cnt
@@ -46,7 +45,6 @@ def validate_accelerator_companies(conn):
     for acc, cnt in rows:
         print(f"  {acc:<12} {cnt:4d}")
 
-    # CIK lookup coverage
     with_cik = query(conn, "SELECT COUNT(*) FROM accelerator_companies WHERE edgar_cik IS NOT NULL")[0][0]
     exact = query(conn, "SELECT COUNT(*) FROM accelerator_companies WHERE cik_confidence = 'exact'")[0][0]
     fuzzy = query(conn, "SELECT COUNT(*) FROM accelerator_companies WHERE cik_confidence = 'fuzzy'")[0][0]
@@ -55,7 +53,6 @@ def validate_accelerator_companies(conn):
     print(f"  Fuzzy matches:  {fuzzy} [review recommended]")
     print(f"  Not yet found:  {total - with_cik}")
 
-    # Batch distribution (YC)
     print("\nYC batch distribution (top 10):")
     rows = query(conn, """
         SELECT batch, COUNT(*) AS cnt
@@ -85,7 +82,6 @@ def validate_edgar(conn):
     pct_amount = (with_amount / total * 100) if total else 0
     print(f"With amount_raised populated: {with_amount}/{total} ({pct_amount:.1f}%)")
 
-    # Matched to accelerator company
     matched = query(conn, "SELECT COUNT(*) FROM edgar_filings WHERE accelerator_id IS NOT NULL")[0][0]
     print(f"Matched to accelerator company: {matched}/{total} ({matched/total*100:.1f}%)")
 

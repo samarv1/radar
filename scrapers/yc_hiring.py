@@ -106,7 +106,6 @@ def scrape():
                 )
                 reset_count = cur.rowcount
 
-            # Clear the flag for YC companies that fell off the isHiring list.
             cur.execute(
                 """
                 UPDATE accelerator_companies

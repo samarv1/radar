@@ -99,7 +99,7 @@ def search_form_d_stubs(start_date: str, end_date: str, max_stubs: int = 2000, s
             items = src.get("items", [])
 
             if _is_fund_stub(items):
-                continue  # skip funds early
+                continue
 
             ciks = src.get("ciks", [])
             cik = ciks[0] if ciks else ""
@@ -111,7 +111,7 @@ def search_form_d_stubs(start_date: str, end_date: str, max_stubs: int = 2000, s
                 "accession_no": src.get("adsh", ""),
                 "entity_name": entity_name,
                 "file_date": src.get("file_date", ""),
-                "cik": cik.lstrip("0"),  # remove leading zeros for URL path
+                "cik": cik.lstrip("0"),
                 "inc_state": inc_states[0] if inc_states else None,
             })
             kept += 1
@@ -141,7 +141,6 @@ def fetch_primary_xml(cik: str, accession_no: str) -> tuple[str | None, str | No
     base = f"{EDGAR_ARCHIVES}/{cik}/{accession_path}"
     xml_candidates = []
 
-    # Try the filing index JSON first to get the real filename
     try:
         idx_resp = requests.get(
             f"{base}/{accession_path}-index.json", headers=HEADERS, timeout=20
@@ -155,7 +154,6 @@ def fetch_primary_xml(cik: str, accession_no: str) -> tuple[str | None, str | No
     except Exception:
         pass
 
-    # Fallback: common Form D XML names
     xml_candidates += [
         f"{base}/primary_doc.xml",
         f"{base}/{accession_no}.xml",
@@ -488,11 +486,9 @@ def _targeted_one(acc_id: int, name: str, cik: str, cutoff: date, open_conns: li
         if filed < cutoff:
             continue
 
-        # Normalize accession: add dashes if missing
         accession_no = accession_no.replace("-", "")
         accession_no = f"{accession_no[:10]}-{accession_no[10:12]}-{accession_no[12:]}"
 
-        # Fetch XML for this filing
         xml_text, raw_url = fetch_primary_xml(cik, accession_no)
         if not xml_text:
             continue
@@ -508,7 +504,6 @@ def _targeted_one(acc_id: int, name: str, cik: str, cutoff: date, open_conns: li
             with _targeted_print_lock:
                 print(f"  [{name}] NEW filing {accession_no} filed {filed_str} amount={parsed.get('amount_raised')}")
         else:
-            # Update accelerator_id on existing record if not set
             with conn.cursor() as cur:
                 cur.execute(
                     "UPDATE edgar_filings SET accelerator_id = %s WHERE accession_number = %s AND accelerator_id IS NULL",

@@ -72,7 +72,6 @@ def parse_enrichment(xml_text: str) -> tuple[int | None, str | None, str | None]
                 return el.text.strip()
         return None
 
-    # investor count
     investor_count = None
     el = root.find(".//totalNumberAlreadyInvested")
     if el is not None and el.text:
@@ -81,7 +80,6 @@ def parse_enrichment(xml_text: str) -> tuple[int | None, str | None, str | None]
         except ValueError:
             pass
 
-    # VC firm signal from director/promoter relationship clarifications
     vc_firm_signal = None
     for person in root.findall(".//relatedPersonInfo"):
         relationships = [r.text or "" for r in person.findall(".//relationship")]

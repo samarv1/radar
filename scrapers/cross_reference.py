@@ -16,7 +16,7 @@ from rapidfuzz import process, fuzz
 sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.dirname(__file__)))
 from db.connection import get_connection
 
-MATCH_THRESHOLD = 85  # minimum score to be considered a match
+MATCH_THRESHOLD = 85
 AMBIGUOUS_ZONE_MAX = 92  # scores 85-92 flagged for manual review
 
 
@@ -84,7 +84,6 @@ def run():
             if not edgar_norm.strip():
                 continue
 
-            # Take only the single best match per filing
             result = process.extractOne(
                 edgar_norm,
                 yc_names_norm,

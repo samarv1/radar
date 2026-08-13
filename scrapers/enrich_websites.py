@@ -50,11 +50,9 @@ def get_sequoia_website(source_url: str) -> str | None:
         if r.status_code != 200:
             return None
         soup = BeautifulSoup(r.text, "html.parser")
-        # Primary: the "visit site" button
         btn = soup.find("a", class_=re.compile(r"button--outline-light"), target="_blank")
         if btn and btn.get("href", "").startswith("http") and "sequoiacap" not in btn["href"]:
             return btn["href"].rstrip("/")
-        # Fallback: the h1 logo link
         h1 = soup.find("h1")
         if h1:
             a = h1.find("a", href=re.compile(r"^https?://(?!sequoiacap)"))

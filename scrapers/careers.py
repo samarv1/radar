@@ -87,7 +87,6 @@ def categorize(title: str) -> str:
 
 # --- ATS discovery (website-first) ---
 
-# Patterns to detect ATS systems in redirect URLs and page HTML
 _ATS_PATTERNS = [
     ("greenhouse", re.compile(r"boards\.greenhouse\.io/([^/?\s\"']+)", re.I)),
     # Some companies embed the Greenhouse API URL directly in their JS bundle
@@ -174,13 +173,11 @@ def discover_ats(website: str) -> tuple[str | None, str | None, str | None]:
         try:
             r = requests.get(base + path, headers=HEADERS, timeout=10, allow_redirects=True)
             time.sleep(SLEEP)
-            # Check final URL after redirects
             for ats, pattern in _ATS_PATTERNS:
                 m = pattern.search(r.url)
                 if m:
                     slug = m.group(1).strip("/")
                     return ats, slug, _board_url(ats, slug)
-            # Scan page body for embedded ATS links
             if r.status_code == 200 and len(r.content) < 2_000_000:
                 for ats, pattern in _ATS_PATTERNS:
                     m = pattern.search(r.text)
@@ -476,14 +473,12 @@ def sync_jobs(conn, company_id: int, ats: str, jobs: list[dict]):
     fresh_ids = {j["job_id"] for j in jobs}
 
     with conn.cursor() as cur:
-        # Get existing job_ids for this company
         cur.execute(
             "SELECT job_id FROM job_listings WHERE company_id = %s AND ats = %s",
             (company_id, ats),
         )
         existing_ids = {row[0] for row in cur.fetchall()}
 
-        # Remove jobs that disappeared from the ATS
         removed = existing_ids - fresh_ids
         if removed:
             cur.execute(
@@ -510,7 +505,6 @@ def sync_jobs(conn, company_id: int, ats: str, jobs: list[dict]):
                     j.get("posted_at"),
                 ))
 
-        # Update scraped_at on all remaining (still-active) jobs
         if fresh_ids:
             cur.execute(
                 "UPDATE job_listings SET scraped_at = NOW() WHERE company_id = %s AND ats = %s",
@@ -745,7 +739,6 @@ def _scrape_one(company: dict, total: int, idx: int) -> bool:
                 matched_ats = known_ats
 
     if matched_ats is None:
-        # Full discovery: try each careers path and scan for ATS links.
         if valid_website:
             ats_name, slug, url = discover_ats(website)
             if ats_name:

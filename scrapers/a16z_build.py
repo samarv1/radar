@@ -38,7 +38,6 @@ HEADERS = {
     "Accept": "application/rss+xml, application/xml, text/xml, */*",
 }
 
-# Domains that are not company websites
 _SKIP_DOMAINS = re.compile(
     r"(linkedin\.com|ashbyhq\.com|lever\.co|greenhouse\.io|boards\.greenhouse|"
     r"jobs\.ashby|drive\.google\.com|docs\.google\.com|x\.com|twitter\.com|"
@@ -48,7 +47,6 @@ _SKIP_DOMAINS = re.compile(
     re.IGNORECASE,
 )
 
-# Words that indicate job role links or non-company links
 _JOB_WORDS = {
     "engineer", "engineering", "designer", "design", "product", "manager",
     "lead", "head", "director", "developer", "scientist", "analyst",

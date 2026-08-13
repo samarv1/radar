@@ -36,7 +36,6 @@ TARGET_URL = os.environ.get("PROD_DATABASE_URL")
 SKIP_COLUMNS = {"id", "created_at", "updated_at"}
 
 CHILD_TABLES = [
-    # (table, unique_cols, fk_column)
     ("edgar_filings", ["accession_number"], "accelerator_id"),
     ("ph_launches", ["ph_id"], "accelerator_id"),
     ("funding_news", ["article_url"], "accelerator_id"),
@@ -82,7 +81,7 @@ def promote_accelerator_companies(src_conn, tgt_conn):
     inserted = 0
     with tgt_conn.cursor() as cur:
         for row in rows:
-            values = row[1:]  # drop local id
+            values = row[1:]
             cur.execute(
                 f"INSERT INTO {table} ({col_list}) VALUES ({placeholders}) "
                 f"ON CONFLICT (source_url) DO NOTHING",

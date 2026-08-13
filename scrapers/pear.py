@@ -39,7 +39,7 @@ def fetch_all_companies() -> list[dict]:
         )
 
         if resp.status_code == 400:
-            break  # past last page
+            break
         if resp.status_code != 200:
             print(f"Pear API error {resp.status_code} on page {page}")
             break
@@ -96,12 +96,10 @@ def scrape():
                 continue
 
             meta = hit.get("meta") or {}
-            # Skip acquired companies
             if meta.get("acquired"):
                 skipped += 1
                 continue
 
-            # Website: prefer explicit website_url meta, fall back to link field
             website = (
                 meta.get("website_url")
                 or meta.get("_links_to")

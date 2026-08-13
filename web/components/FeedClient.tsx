@@ -301,7 +301,6 @@ const visible = applyFilters(companies, filters);
         </div>
       ) : (
         <>
-          {/* Tab switcher */}
           <div className="flex gap-1 mb-6 border-b border-border">
             <button
               onClick={() => setTab("raised")}
