@@ -11,17 +11,15 @@ Lightspeed: <a id="company_url" href="https://...">
 Sequoia:    <a class="button button--outline-light button--small" target="_blank" href="https://...">
 
 Usage:
-    uv run python scrapers/enrich_websites.py [--accelerator lightspeed|sequoia|all]
+    uv run python -m scrapers.enrich_websites [--accelerator lightspeed|sequoia|all]
 """
 
 import re
-import sys
 import time
 
 import requests
 from bs4 import BeautifulSoup
 
-sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.dirname(__file__)))
 from db.connection import get_connection
 
 HEADERS = {"User-Agent": "Mozilla/5.0 radar-tool contact@example.com"}

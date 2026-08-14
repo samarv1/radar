@@ -6,16 +6,15 @@ all accelerator companies (not just network members). Filters to US companies
 from 2018 onwards. Upserts into accelerator_companies.
 
 Usage:
-    uv run python scrapers/techstars.py [--all-countries] [--min-year 2018]
+    uv run python -m scrapers.techstars [--all-countries] [--min-year 2018]
 """
 
-import sys
 import time
 
 import requests
 
-sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.dirname(__file__)))
-from db.connection import apply_schema, get_connection
+from db.connection import apply_schema
+from scrapers._common import execute_upsert, run_upsert_batch
 from scrapers.location import classify_location
 
 TYPESENSE_URL = "https://8gbms7c94riane0lp-1.a1.typesense.net"
@@ -81,13 +80,10 @@ def upsert_company(conn, row: dict) -> bool:
             updated_at  = NOW()
         RETURNING (xmax = 0) AS inserted
     """
-    with conn.cursor() as cur:
-        cur.execute(sql, row)
-        result = cur.fetchone()
-        return result[0] if result else False
+    return execute_upsert(conn, sql, row)
 
 
-def scrape(min_year: int = 2018, all_countries: bool = False):
+def scrape(min_year: int = 2018, all_countries: bool = False, conn=None):
     print("Applying DB schema...")
     apply_schema()
 
@@ -104,50 +100,38 @@ def scrape(min_year: int = 2018, all_countries: bool = False):
     companies = [c for c in companies if not c.get("first_session_year") or c["first_session_year"] >= min_year]
     print(f"After year filter (>={min_year}): {len(companies)} of {before_filter}")
 
-    conn = get_connection()
-    inserted = updated = 0
+    rows = []
+    for c in companies:
+        name = c.get("company_name", "").strip()
+        if not name:
+            continue
 
-    try:
-        for c in companies:
-            name = c.get("company_name", "").strip()
-            if not name:
-                continue
+        company_id = c.get("company_id", "")
+        website = c.get("website", "") or None
+        year = c.get("first_session_year")
+        tags = c.get("industry_vertical", []) or []
+        programs = c.get("program_names", [])
+        batch = str(year) if year else None
 
-            company_id = c.get("company_id", "")
-            website = c.get("website", "") or None
-            year = c.get("first_session_year")
-            tags = c.get("industry_vertical", []) or []
-            programs = c.get("program_names", [])
-            batch = str(year) if year else None
+        hq_city = c.get("city") or None
+        hq_state = c.get("state_province") or None
+        hq_country = c.get("country") or None
+        location_tag = classify_location(hq_city, hq_state, hq_country)
 
-            hq_city = c.get("city") or None
-            hq_state = c.get("state_province") or None
-            hq_country = c.get("country") or None
-            location_tag = classify_location(hq_city, hq_state, hq_country)
+        rows.append({
+            "name": name,
+            "website": f"https://{website}" if website and not website.startswith("http") else website,
+            "batch": batch,
+            "description": programs[0] if programs else None,
+            "tags": tags or None,
+            "source_url": f"https://www.techstars.com/portfolio#{company_id}",
+            "hq_city": hq_city,
+            "hq_state": hq_state,
+            "hq_country": hq_country,
+            "location_tag": location_tag,
+        })
 
-            row = {
-                "name": name,
-                "website": f"https://{website}" if website and not website.startswith("http") else website,
-                "batch": batch,
-                "description": programs[0] if programs else None,
-                "tags": tags or None,
-                "source_url": f"https://www.techstars.com/portfolio#{company_id}",
-                "hq_city": hq_city,
-                "hq_state": hq_state,
-                "hq_country": hq_country,
-                "location_tag": location_tag,
-            }
-
-            is_new = upsert_company(conn, row)
-            if is_new:
-                inserted += 1
-            else:
-                updated += 1
-
-        conn.commit()
-    finally:
-        conn.close()
-
+    inserted, updated = run_upsert_batch(rows, upsert_company, conn=conn)
     print(f"Done. Inserted: {inserted}, Updated: {updated}")
 
 

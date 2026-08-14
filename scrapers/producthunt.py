@@ -9,7 +9,7 @@ and fuzzy name match.
 Requires PH_API_TOKEN in .env.
 
 Usage:
-    uv run python scrapers/producthunt.py [--days 90] [--min-votes 50]
+    uv run python -m scrapers.producthunt [--days 90] [--min-votes 50]
 """
 
 import os
@@ -23,7 +23,6 @@ import requests
 from dotenv import load_dotenv
 from rapidfuzz import fuzz, process
 
-sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.dirname(__file__)))
 from db.connection import get_connection
 
 load_dotenv()
@@ -234,7 +233,7 @@ def scrape(days_back: int = DAYS_BACK, min_votes: int = MIN_VOTES):
             else:
                 updated += 1
 
-            tag = f" [ACC MATCH]" if acc_id else ""
+            tag = " [ACC MATCH]" if acc_id else ""
             print(f"  {'NEW' if is_new else 'UPD'} {launch['votes_count']:4d}v  {launch['product_name'][:40]}{tag}")
 
         conn.commit()

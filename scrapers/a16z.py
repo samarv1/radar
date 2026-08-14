@@ -6,21 +6,19 @@ in a data-companies HTML attribute. Filters to active (non-exit) companies.
 Writes into accelerator_companies with accelerator='a16z'.
 
 Usage:
-    uv run python scrapers/a16z.py
+    uv run python -m scrapers.a16z
 """
 
 import html as html_lib
 import re
-import sys
 import time
 
 import requests
 
-sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.dirname(__file__)))
-from db.connection import get_connection
+from scrapers._common import DEFAULT_HEADERS, execute_upsert, run_upsert_batch
 
 PORTFOLIO_URL = "https://a16z.com/portfolio/"
-HEADERS = {"User-Agent": "radar-tool contact@example.com"}
+HEADERS = DEFAULT_HEADERS
 SLEEP = 1.0
 
 # Stages to exclude — these are exits, not potential employers
@@ -72,13 +70,10 @@ def upsert_company(conn, row: dict) -> bool:
             updated_at  = NOW()
         RETURNING (xmax = 0) AS inserted
     """
-    with conn.cursor() as cur:
-        cur.execute(sql, row)
-        result = cur.fetchone()
-        return result[0] if result else False
+    return execute_upsert(conn, sql, row)
 
 
-def scrape():
+def scrape(conn=None):
     print("Fetching a16z portfolio page...")
     companies = fetch_companies()
     print(f"Found {len(companies)} total companies")
@@ -86,49 +81,39 @@ def scrape():
     targets = [c for c in companies if is_target(c)]
     print(f"After filtering exits: {len(targets)} companies")
 
-    conn = get_connection()
-    inserted = updated = skipped = 0
+    rows = []
+    skipped = 0
 
-    try:
-        for c in targets:
-            name = c.get("name", "").strip()
-            if not name:
-                skipped += 1
-                continue
+    for c in targets:
+        name = c.get("name", "").strip()
+        if not name:
+            skipped += 1
+            continue
 
-            permalink = (c.get("permalink") or "").strip()
-            if not permalink:
-                skipped += 1
-                continue
+        permalink = (c.get("permalink") or "").strip()
+        if not permalink:
+            skipped += 1
+            continue
 
-            stages = c.get("stages") or []
-            stage = ", ".join(stages) if isinstance(stages, list) else str(stages or "")
+        stages = c.get("stages") or []
+        stage = ", ".join(stages) if isinstance(stages, list) else str(stages or "")
 
-            focus_areas = c.get("focus_areas") or []
-            tags = [f for f in focus_areas if isinstance(f, str)] if isinstance(focus_areas, list) else []
+        focus_areas = c.get("focus_areas") or []
+        tags = [f for f in focus_areas if isinstance(f, str)] if isinstance(focus_areas, list) else []
 
-            year_founded = (c.get("year_founded") or "").strip() or None
+        year_founded = (c.get("year_founded") or "").strip() or None
 
-            row = {
-                "name": name,
-                "website": (c.get("company_url") or "").strip() or None,
-                "batch": year_founded,
-                "description": (c.get("website_description") or "").strip() or None,
-                "tags": tags or None,
-                "stage": stage or None,
-                "source_url": permalink,
-            }
+        rows.append({
+            "name": name,
+            "website": (c.get("company_url") or "").strip() or None,
+            "batch": year_founded,
+            "description": (c.get("website_description") or "").strip() or None,
+            "tags": tags or None,
+            "stage": stage or None,
+            "source_url": permalink,
+        })
 
-            is_new = upsert_company(conn, row)
-            if is_new:
-                inserted += 1
-            else:
-                updated += 1
-
-        conn.commit()
-    finally:
-        conn.close()
-
+    inserted, updated = run_upsert_batch(rows, upsert_company, conn=conn)
     print(f"\nDone. Inserted: {inserted}, Updated: {updated}, Skipped: {skipped}")
 
 

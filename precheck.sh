@@ -129,7 +129,20 @@ else
   fail "Skipped — DATABASE_URL not set"
 fi
 
-# ─── 5. Next.js build (TypeScript + compilation) ─────────────────────────────
+# ─── 5. Python lint (ruff) ────────────────────────────────────────────────────
+echo ""
+echo "=============================="
+echo "  PYTHON LINT (ruff)"
+echo "=============================="
+
+cd "$ROOT"
+if uv run ruff check . 2>&1; then
+  ok "ruff passed"
+else
+  fail "ruff reported errors"
+fi
+
+# ─── 6. Next.js build (TypeScript + compilation) ──────────────────────────────
 echo ""
 echo "=============================="
 echo "  NEXT.JS BUILD"
@@ -142,7 +155,7 @@ else
   fail "next build failed"
 fi
 
-# ─── 6. ESLint ───────────────────────────────────────────────────────────────
+# ─── 7. ESLint ───────────────────────────────────────────────────────────────
 echo ""
 echo "=============================="
 echo "  ESLINT"
@@ -154,7 +167,7 @@ else
   fail "ESLint reported errors"
 fi
 
-# ─── 7. Summary ──────────────────────────────────────────────────────────────
+# ─── 8. Summary ──────────────────────────────────────────────────────────────
 echo ""
 echo "=============================="
 echo "  SUMMARY"

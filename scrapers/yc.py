@@ -5,15 +5,13 @@ Uses the public Algolia search index backing ycombinator.com/companies.
 Writes into accelerator_companies with accelerator='yc'.
 
 Usage:
-    uv run python scrapers/yc.py
+    uv run python -m scrapers.yc
 """
 
-import sys
 import time
 
 import requests
 
-sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.dirname(__file__)))
 from db.connection import apply_schema, get_connection
 from scrapers.location import classify_location, parse_yc_all_locations
 

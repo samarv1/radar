@@ -7,12 +7,11 @@ cross-references with accelerator_companies by fuzzy name match, and upserts
 into funding_news.
 
 Usage:
-    uv run python scrapers/techcrunch.py [--days 90]
+    uv run python -m scrapers.techcrunch [--days 90]
 """
 
 import html
 import re
-import sys
 import time
 from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
@@ -20,7 +19,6 @@ from html.parser import HTMLParser
 import requests
 from rapidfuzz import fuzz, process
 
-sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.dirname(__file__)))
 from db.connection import get_connection
 
 WP_API = "https://techcrunch.com/wp-json/wp/v2/posts"

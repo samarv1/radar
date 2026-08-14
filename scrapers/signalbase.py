@@ -6,23 +6,21 @@ sitemap, parses company name/amount/round from JSON-LD + meta tags, and upserts
 into funding_news with source='signalbase'.
 
 Usage:
-    uv run python scrapers/signalbase.py [--days 7]
+    uv run python -m scrapers.signalbase [--days 7]
 """
 
 import html as html_lib
 import json
 import re
-import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 from urllib.parse import urlparse, urlunparse
 from xml.etree import ElementTree as ET
 
 import requests
 from rapidfuzz import fuzz, process
 
-sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.dirname(__file__)))
 from db.connection import get_connection
 
 SITEMAP_BASE = "https://www.trysignalbase.com/sitemap/{}"

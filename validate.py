@@ -150,7 +150,6 @@ def validate_acceptance_criteria(conn):
     total_acc = query(conn, "SELECT COUNT(*) FROM accelerator_companies")[0][0]
     total_edgar = query(conn, "SELECT COUNT(*) FROM edgar_filings")[0][0]
     match_total = query(conn, "SELECT COUNT(*) FROM edgar_filings e JOIN accelerator_companies a ON e.accelerator_id = a.id WHERE (e.amount_raised IS NULL OR e.amount_raised <= 100000000) AND a.is_excluded = FALSE")[0][0]
-    cik_coverage = query(conn, "SELECT COUNT(*) FROM accelerator_companies WHERE edgar_cik IS NOT NULL")[0][0]
 
     accs = query(conn, "SELECT COUNT(DISTINCT accelerator) FROM accelerator_companies")[0][0]
 

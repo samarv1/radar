@@ -6,11 +6,10 @@ API, pre-filters pooled investment funds at the stub level (via `items`
 field), fetches primary XML for the rest, and upserts into edgar_filings.
 
 Usage:
-    uv run python scrapers/edgar.py [--days 90] [--limit 2000]
+    uv run python -m scrapers.edgar [--days 90] [--limit 2000]
 """
 
 import re
-import sys
 import threading
 import time
 import xml.etree.ElementTree as ET
@@ -19,7 +18,6 @@ from datetime import date, timedelta, datetime
 
 import requests
 
-sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.dirname(__file__)))
 from db.connection import apply_schema, get_connection
 
 EFTS_SEARCH = "https://efts.sec.gov/LATEST/search-index"
@@ -316,7 +314,7 @@ def scrape(days_back: int = 180, limit: int = 2000, start_offset: int = 0):
 
             xml_text, raw_url = fetch_primary_xml(cik, accession_no)
             if not xml_text:
-                print(f" — no XML")
+                print(" — no XML")
                 failed += 1
                 continue
 
@@ -331,10 +329,10 @@ def scrape(days_back: int = 180, limit: int = 2000, start_offset: int = 0):
 
             if upsert_filing(conn, filing_row):
                 inserted += 1
-                print(f" — inserted ✓")
+                print(" — inserted ✓")
             else:
                 skipped_duplicate += 1
-                print(f" — duplicate")
+                print(" — duplicate")
 
             conn.commit()
 

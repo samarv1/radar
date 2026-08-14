@@ -10,7 +10,7 @@ match) and classifies hq_city/hq_state/hq_country from it. Companies with no
 EDGAR match stay 'unknown'.
 
 Usage:
-    uv run python scrapers/enrich_location.py [--all]
+    uv run python -m scrapers.enrich_location [--all]
 
 By default only processes un-enriched rows (location_tag IS NULL).
 Pass --all to re-process everything (useful after expanding the city lookup
@@ -18,9 +18,7 @@ tables in scrapers/location.py).
 """
 
 import argparse
-import sys
 
-sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.dirname(__file__)))
 from db.connection import get_connection
 from scrapers.location import classify_edgar_state_field
 

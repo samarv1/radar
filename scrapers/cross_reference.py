@@ -5,15 +5,13 @@ Normalizes company names, runs batch fuzzy matching via rapidfuzz,
 and stores matches above the threshold in the `matches` table.
 
 Usage:
-    uv run python scrapers/cross_reference.py
+    uv run python -m scrapers.cross_reference
 """
 
 import re
-import sys
 
 from rapidfuzz import process, fuzz
 
-sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.dirname(__file__)))
 from db.connection import get_connection
 
 MATCH_THRESHOLD = 85

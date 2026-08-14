@@ -8,12 +8,10 @@ partially migrated.
 
 Usage:
     uv run python -c "from db.connection import apply_schema; apply_schema()"
-    uv run python db/migrate.py
+    uv run python -m db.migrate
 """
 
-import sys
 
-sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.dirname(__file__)))
 from db.connection import get_connection
 
 

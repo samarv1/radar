@@ -10,19 +10,17 @@ Confidence levels:
   (NULL) - no match found; company likely hasn't filed Form D yet
 
 Usage:
-    uv run python scrapers/cik_lookup.py [--limit 200] [--refetch-fuzzy]
+    uv run python -m scrapers.cik_lookup [--limit 200] [--refetch-fuzzy]
 """
 
 import re
-import sys
 import time
 import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 
 import requests
 from rapidfuzz import fuzz
 
-sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.dirname(__file__)))
 from db.connection import get_connection
 
 EFTS = "https://efts.sec.gov/LATEST/search-index"
@@ -203,7 +201,7 @@ def run(limit: int = 500, refetch_fuzzy: bool = False, workers: int = 5):
         list(executor.map(_lookup_one, args))
 
     print(f"\nDone. Exact: {_counters['exact']}, Fuzzy: {_counters['fuzzy']}, Not found: {_counters['not_found']}, Failed: {_counters['failed']}")
-    print(f"Run with --refetch-fuzzy to retry fuzzy matches after manual review.")
+    print("Run with --refetch-fuzzy to retry fuzzy matches after manual review.")
 
 
 if __name__ == "__main__":

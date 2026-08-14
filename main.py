@@ -17,7 +17,7 @@ from scrapers.a16z_build import scrape as scrape_a16z_build
 from scrapers.careers import scrape as scrape_careers
 from scrapers.cik_lookup import run as run_cik_lookup
 from scrapers.cross_reference import run as run_cross_reference
-from scrapers.edgar import scrape as scrape_edgar, scrape_chunked as scrape_edgar_chunked, scrape_targeted as scrape_edgar_targeted
+from scrapers.edgar import scrape_chunked as scrape_edgar_chunked, scrape_targeted as scrape_edgar_targeted
 from scrapers.enrich_location import run as run_enrich_location
 from scrapers.lightspeed import scrape as scrape_lightspeed
 from scrapers.pear import scrape as scrape_pear

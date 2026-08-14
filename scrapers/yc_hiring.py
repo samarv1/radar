@@ -6,15 +6,13 @@ matches them to accelerator_companies, and resets careers_scraped_at so
 the next careers sweep picks them up immediately.
 
 Usage:
-    uv run python scrapers/yc_hiring.py
+    uv run python -m scrapers.yc_hiring
 """
 
-import sys
 import time
 
 import requests
 
-sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.dirname(__file__)))
 from db.connection import get_connection
 
 ALGOLIA_APP_ID = "45BWZJ1SGC"

@@ -8,22 +8,20 @@ partnered in 2018 or later (the Series A–C sweet spot).
 Writes into accelerator_companies with accelerator='sequoia'.
 
 Usage:
-    uv run python scrapers/sequoia.py [--all-stages] [--min-year 2018]
+    uv run python -m scrapers.sequoia [--all-stages] [--min-year 2018]
 """
 
 import re
-import sys
 import time
 
 import requests
 from bs4 import BeautifulSoup
 
-sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.dirname(__file__)))
-from db.connection import get_connection
+from scrapers._common import DEFAULT_HEADERS, execute_upsert, run_upsert_batch
 
 BASE_URL = "https://www.sequoiacap.com/our-companies/"
 WP_API = "https://sequoiacap.com/wp-json/wp/v2/company"
-HEADERS = {"User-Agent": "radar-tool contact@example.com"}
+HEADERS = DEFAULT_HEADERS
 SLEEP = 0.4
 
 # Stages we care about — exclude large exits and very old investments
@@ -105,13 +103,10 @@ def upsert_company(conn, row: dict) -> bool:
             updated_at  = NOW()
         RETURNING (xmax = 0) AS inserted
     """
-    with conn.cursor() as cur:
-        cur.execute(sql, row)
-        result = cur.fetchone()
-        return result[0] if result else False
+    return execute_upsert(conn, sql, row)
 
 
-def scrape(min_year: int = 2018, all_stages: bool = False):
+def scrape(min_year: int = 2018, all_stages: bool = False, conn=None):
     print("Fetching Sequoia HTML table (stage + year data)...")
     table_data = parse_html_table()
     print(f"  Found {len(table_data)} companies with stage/year data")
@@ -154,34 +149,19 @@ def scrape(min_year: int = 2018, all_stages: bool = False):
 
     print(f"After filtering (year>={min_year} where known, all_stages={all_stages}): {len(filtered)}")
 
-    conn = get_connection()
-    inserted = updated = skipped = 0
+    rows = []
+    for c in filtered:
+        slug = c["slug"]
+        rows.append({
+            "name": c["name"],
+            "batch": str(c["year"]) if c["year"] else None,
+            "description": c["desc"] or None,
+            "stage": c["stage"] or None,
+            "source_url": f"https://sequoiacap.com/companies/{slug}/",
+        })
 
-    try:
-        for c in filtered:
-            name = c["name"]
-            slug = c["slug"]
-            source_url = f"https://sequoiacap.com/companies/{slug}/"
-
-            row = {
-                "name": name,
-                "batch": str(c["year"]) if c["year"] else None,
-                "description": c["desc"] or None,
-                "stage": c["stage"] or None,
-                "source_url": source_url,
-            }
-
-            is_new = upsert_company(conn, row)
-            if is_new:
-                inserted += 1
-            else:
-                updated += 1
-
-        conn.commit()
-    finally:
-        conn.close()
-
-    print(f"Done. Inserted: {inserted}, Updated: {updated}, Skipped: {skipped}")
+    inserted, updated = run_upsert_batch(rows, upsert_company, conn=conn)
+    print(f"Done. Inserted: {inserted}, Updated: {updated}")
 
 
 if __name__ == "__main__":

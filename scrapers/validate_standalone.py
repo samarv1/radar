@@ -8,15 +8,13 @@ Pipeline step, called from main.py — not to be confused with root validate.py,
 which is a manual data-quality report.
 
 Usage:
-    uv run python scrapers/validate_standalone.py
+    uv run python -m scrapers.validate_standalone
 """
 
 import re
-import sys
 
 from rapidfuzz import process, fuzz
 
-sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.dirname(__file__)))
 from db.connection import get_connection
 
 MATCH_THRESHOLD = 85

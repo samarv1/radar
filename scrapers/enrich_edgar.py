@@ -6,21 +6,19 @@ For each filing with raw_url but no investor_count yet, fetches the XML and extr
   - vc_firm_signal: VC firm name found in director/promoter relationshipClarification text
 
 Usage:
-    uv run python scrapers/enrich_edgar.py [--all]
+    uv run python -m scrapers.enrich_edgar [--all]
 
 By default only processes un-enriched rows (investor_count IS NULL).
 Pass --all to re-process everything (useful after expanding VC_FIRMS list).
 """
 
 import re
-import sys
 import time
 import xml.etree.ElementTree as ET
 import argparse
 
 import requests
 
-sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.dirname(__file__)))
 from db.connection import get_connection
 
 HEADERS = {

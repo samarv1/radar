@@ -93,8 +93,8 @@ uv run python main.py --mode weekly
 uv run python validate.py
 
 # Careers scraper:
-uv run python scrapers/careers.py --hiring-sweep --workers 8
-uv run python scrapers/yc_hiring.py   # reset YC isHiring companies for next careers sweep
+uv run python -m scrapers.careers --hiring-sweep --workers 8
+uv run python -m scrapers.yc_hiring   # reset YC isHiring companies for next careers sweep
 ```
 
 **Frontend:**
@@ -109,7 +109,7 @@ npm run dev   # reads DATABASE_URL from ../.env
 
 ```bash
 uv run python -c "from db.connection import apply_schema; apply_schema()"
-uv run python db/migrate.py
+uv run python -m db.migrate
 ```
 
 `db/schema.sql` covers the original tables; everything since is in `db/migrate.py`, which runs all migrations in order and is safe to re-run against a partially-migrated DB.
@@ -119,5 +119,5 @@ uv run python db/migrate.py
 `db/promote.py` copies newly-scraped rows straight from your local DB into production, so you can test a scraper change locally and ship the results without re-running it against prod. It's insert-only (`ON CONFLICT DO NOTHING`), so it's always safe to re-run. Set `PROD_DATABASE_URL` in `.env` alongside your local `DATABASE_URL`, then:
 
 ```bash
-uv run python db/promote.py
+uv run python -m db.promote
 ```

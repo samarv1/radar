@@ -17,13 +17,11 @@ Inserts use ON CONFLICT ... DO NOTHING everywhere — this never overwrites a
 row already in production, so it's always safe to run again.
 
 Usage:
-    uv run python db/promote.py
+    uv run python -m db.promote
 """
 
 import os
-import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from db.connection import get_connection, apply_schema
 from db.migrate import run as apply_migrations
 

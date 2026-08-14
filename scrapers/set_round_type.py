@@ -4,13 +4,12 @@ Manually set round_type for a company by name.
 Manual one-off — not part of the automated pipeline (main.py).
 
 Usage:
-    uv run python scrapers/set_round_type.py "Blacksmith" "Series B"
-    uv run python scrapers/set_round_type.py "Phonely" "Series A"
+    uv run python -m scrapers.set_round_type "Blacksmith" "Series B"
+    uv run python -m scrapers.set_round_type "Phonely" "Series A"
 """
 
 import sys
 
-sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.dirname(__file__)))
 from db.connection import get_connection
 
 

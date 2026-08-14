@@ -10,12 +10,11 @@ an existing accelerator_companies entry get accelerator_id set (they'll appear
 in the accel_announced feed branch). Others appear as None/Unknown.
 
 Usage:
-    uv run python scrapers/a16z_build.py [--days 30]
+    uv run python -m scrapers.a16z_build [--days 30]
 """
 
 import html
 import re
-import sys
 import time
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
@@ -24,9 +23,8 @@ import xml.etree.ElementTree as ET
 
 import requests
 
-sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.dirname(__file__)))
 from db.connection import get_connection
-from scrapers.techcrunch import normalize, find_match, load_accelerator_index
+from scrapers.techcrunch import find_match, load_accelerator_index
 
 RSS_URL = "https://a16zbuild.substack.com/feed"
 HEADERS = {

@@ -6,23 +6,20 @@ Extracts the company list embedded in lsvp.com/companies/ as a JS variable
 get slugs for source URLs. Upserts into accelerator_companies.
 
 Usage:
-    uv run python scrapers/lightspeed.py
+    uv run python -m scrapers.lightspeed
 """
 
 import json
 import re
-import sys
 import time
 
 import requests
-from bs4 import BeautifulSoup
 
-sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.dirname(__file__)))
-from db.connection import get_connection
+from scrapers._common import DEFAULT_HEADERS, execute_upsert, run_upsert_batch
 
 LISTING_URL = "https://lsvp.com/companies/"
 SITEMAP_URL = "https://lsvp.com/company-sitemap.xml"
-HEADERS = {"User-Agent": "radar-tool contact@example.com"}
+HEADERS = DEFAULT_HEADERS
 SLEEP = 0.4
 
 
@@ -56,13 +53,13 @@ def upsert_company(conn, row: dict) -> bool:
             updated_at  = NOW()
         RETURNING (xmax = 0) AS inserted
     """
-    with conn.cursor() as cur:
-        cur.execute(sql, row)
-        result = cur.fetchone()
-        return result[0] if result else False
+    is_new = execute_upsert(conn, sql, row)
+    if is_new:
+        print(f"  NEW  {row['name']}")
+    return is_new
 
 
-def scrape():
+def scrape(conn=None):
     print("Fetching Lightspeed company names from listing page...")
     names = fetch_company_names()
     print(f"  Found {len(names)} companies")
@@ -74,26 +71,13 @@ def scrape():
 
     slug_map = {slug_to_name(s).lower(): s for s in slugs}
 
-    conn = get_connection()
-    inserted = updated = 0
+    rows = []
+    for name in names:
+        slug = slug_map.get(name.lower())
+        source_url = f"https://lsvp.com/company/{slug}/" if slug else f"https://lsvp.com/companies/?s={name.replace(' ', '+')}"
+        rows.append({"name": name, "description": None, "source_url": source_url})
 
-    try:
-        for name in names:
-            slug = slug_map.get(name.lower())
-            source_url = f"https://lsvp.com/company/{slug}/" if slug else f"https://lsvp.com/companies/?s={name.replace(' ', '+')}"
-
-            row = {"name": name, "description": None, "source_url": source_url}
-            is_new = upsert_company(conn, row)
-            if is_new:
-                inserted += 1
-                print(f"  NEW  {name}")
-            else:
-                updated += 1
-
-        conn.commit()
-    finally:
-        conn.close()
-
+    inserted, updated = run_upsert_batch(rows, upsert_company, conn=conn)
     print(f"\nDone. Inserted: {inserted}, Updated: {updated}")
 
 

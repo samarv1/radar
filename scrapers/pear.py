@@ -5,19 +5,17 @@ Uses Pear's WordPress REST API (pear_vc_company post type).
 Writes into accelerator_companies with accelerator='pear'.
 
 Usage:
-    uv run python scrapers/pear.py
+    uv run python -m scrapers.pear
 """
 
-import sys
 import time
 
 import requests
 
-sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.dirname(__file__)))
-from db.connection import get_connection
+from scrapers._common import DEFAULT_HEADERS, execute_upsert, run_upsert_batch
 
 BASE = "https://pear.vc/wp-json/wp/v2/pear_vc_company"
-HEADERS = {"User-Agent": "radar-tool contact@example.com"}
+HEADERS = DEFAULT_HEADERS
 PER_PAGE = 100
 SLEEP = 0.3
 
@@ -75,69 +73,56 @@ def upsert_company(conn, row: dict) -> bool:
             updated_at  = NOW()
         RETURNING (xmax = 0) AS inserted
     """
-    with conn.cursor() as cur:
-        cur.execute(sql, row)
-        result = cur.fetchone()
-        return result[0] if result else False
+    return execute_upsert(conn, sql, row)
 
 
-def scrape():
+def scrape(conn=None):
     hits = fetch_all_companies()
     print(f"Total hits: {len(hits)}")
 
-    conn = get_connection()
-    inserted = updated = skipped = 0
+    rows = []
+    skipped = 0
 
-    try:
-        for hit in hits:
-            name = (hit.get("title") or {}).get("rendered", "").strip()
-            if not name:
-                skipped += 1
-                continue
+    for hit in hits:
+        name = (hit.get("title") or {}).get("rendered", "").strip()
+        if not name:
+            skipped += 1
+            continue
 
-            meta = hit.get("meta") or {}
-            if meta.get("acquired"):
-                skipped += 1
-                continue
+        meta = hit.get("meta") or {}
+        if meta.get("acquired"):
+            skipped += 1
+            continue
 
-            website = (
-                meta.get("website_url")
-                or meta.get("_links_to")
-                or hit.get("link")
-                or ""
-            ).strip() or None
+        website = (
+            meta.get("website_url")
+            or meta.get("_links_to")
+            or hit.get("link")
+            or ""
+        ).strip() or None
 
-            # Skip if website is pear.vc itself (means no external link was set)
-            if website and "pear.vc" in website:
-                website = None
+        # Skip if website is pear.vc itself (means no external link was set)
+        if website and "pear.vc" in website:
+            website = None
 
-            slug = hit.get("slug", "")
-            source_url = f"https://pear.vc/companies/{slug}" if slug else None
-            if not source_url:
-                skipped += 1
-                continue
+        slug = hit.get("slug", "")
+        source_url = f"https://pear.vc/companies/{slug}" if slug else None
+        if not source_url:
+            skipped += 1
+            continue
 
-            jobs_url = (meta.get("jobs_url") or "").strip() or None
-            description = (meta.get("short_description") or "").strip() or None
+        jobs_url = (meta.get("jobs_url") or "").strip() or None
+        description = (meta.get("short_description") or "").strip() or None
 
-            row = {
-                "name": name,
-                "website": website,
-                "description": description,
-                "jobs_url": jobs_url,
-                "source_url": source_url,
-            }
+        rows.append({
+            "name": name,
+            "website": website,
+            "description": description,
+            "jobs_url": jobs_url,
+            "source_url": source_url,
+        })
 
-            is_new = upsert_company(conn, row)
-            if is_new:
-                inserted += 1
-            else:
-                updated += 1
-
-        conn.commit()
-    finally:
-        conn.close()
-
+    inserted, updated = run_upsert_batch(rows, upsert_company, conn=conn)
     print(f"\nDone. Inserted: {inserted}, Updated: {updated}, Skipped: {skipped}")
 
 
