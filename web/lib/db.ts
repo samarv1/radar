@@ -78,7 +78,7 @@ export async function getHiringFeed(): Promise<Company[]> {
         a.tags, a.company_status,
         COALESCE(ef_latest.amount_raised, fn_amt.amount_usd)::float AS amount_raised,
         a.round_type AS round_type,
-        COALESCE(h.latest_posted_at::date::text, h.latest_first_seen_at::date::text, a.careers_scraped_at::date::text) AS date_filed,
+        COALESCE(h.latest_posted_at::text, h.latest_first_seen_at::text, a.careers_scraped_at::text) AS date_filed,
         CASE
           WHEN h.latest_posted_at IS NOT NULL THEN 'posted'
           WHEN h.latest_first_seen_at IS NOT NULL THEN 'discovered'
@@ -274,7 +274,7 @@ export async function getFeed(): Promise<Company[]> {
         NULL::text      AS company_status,
         fn.amount_usd::float AS amount_raised,
         fn.round_type   AS round_type,
-        fn.published_at::date::text AS date_filed,
+        fn.published_at::text AS date_filed,
         'announced'::text AS date_source,
         FALSE AS has_edgar,
         0::int AS eng_count,
@@ -360,7 +360,7 @@ export async function getFeed(): Promise<Company[]> {
         a.company_status,
         fn.amount_usd::float AS amount_raised,
         fn.round_type   AS round_type,
-        fn.published_at::date::text AS date_filed,
+        fn.published_at::text AS date_filed,
         'announced'::text AS date_source,
         FALSE AS has_edgar,
         COALESCE(h.eng, 0)::int     AS eng_count,

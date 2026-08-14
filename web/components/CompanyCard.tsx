@@ -58,9 +58,14 @@ function formatAmount(n: number | null): string | null {
   return null;
 }
 
-function formatDate(s: string | null): string {
+function formatDate(s: string | null, dateSource?: string): string {
   if (!s) return "—";
-  return new Date(s).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+  // EDGAR filing dates are plain calendar dates (no time-of-day), so they must be
+  // read back in UTC to avoid shifting a day when the viewer isn't in UTC. Other
+  // sources are real timestamps, so the browser's local timezone is correct.
+  const opts: Intl.DateTimeFormatOptions = { month: "short", day: "numeric" };
+  if (dateSource === "raised") opts.timeZone = "UTC";
+  return new Date(s).toLocaleDateString("en-US", opts);
 }
 
 function OpenRoles({ company, hiringMode }: { company: Company; hiringMode: boolean }) {
@@ -197,7 +202,7 @@ export function CompanyCard({
                       : company.date_source === "posted"
                         ? "posted "
                         : "discovered "}
-                {formatDate(company.date_filed)}
+                {formatDate(company.date_filed, company.date_source)}
               </span>
             </p>
           </div>
