@@ -1,7 +1,7 @@
 import { getFeed, getHiringFeed } from "@/lib/db";
 import { FeedClient } from "@/components/FeedClient";
 
-export const dynamic = "force-dynamic";
+export const revalidate = 3600;
 
 export default async function Home() {
   const [companies, hiringCompanies] = await Promise.all([

@@ -1,6 +1,6 @@
 import { Pool } from "pg";
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 5 });
 
 // Deduplicates accelerator_companies by normalized website, aggregates all
 // accelerators into an array, and surfaces the worst company_status.
