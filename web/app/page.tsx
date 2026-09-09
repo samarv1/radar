@@ -1,7 +1,12 @@
+import type { Metadata } from "next";
 import { getFeed, getHiringFeed } from "@/lib/db";
 import { FeedClient } from "@/components/FeedClient";
 
 export const revalidate = 3600;
+
+export const metadata: Metadata = {
+  alternates: { canonical: "/" },
+};
 
 export default async function Home() {
   const [companies, hiringCompanies] = await Promise.all([

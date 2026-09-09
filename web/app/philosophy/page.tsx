@@ -5,6 +5,7 @@ import { Radar } from "lucide-react";
 export const metadata: Metadata = {
   title: "Philosophy — Radar",
   description: "How to think about startup recruiting: what signals to look for, when to reach out, how to outreach.",
+  alternates: { canonical: "/philosophy" },
 };
 
 export default function PhilosophyPage() {
