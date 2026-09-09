@@ -4,6 +4,10 @@ A data pipeline that helps students find recently funded startups *before* they 
 
 The core idea: the first 60–90 days after a startup closes a funding round is the best window to reach out. They have money and conviction, the founder still reads their own email, and they haven't heavily begun recruiting. Most students miss this window because they're browsing job boards, which are weeks or months behind.
 
+## Demo
+
+https://github.com/user-attachments/assets/8faab8af-4783-40f9-86d7-ca4e9796f7b7
+
 ---
 
 ## Tech stack
