@@ -125,3 +125,9 @@ uv run python -m db.migrate
 ```bash
 uv run python -m db.promote
 ```
+
+---
+
+## License & Contributing
+
+This project is open source under the [MIT License](LICENSE). Open to issues and PRs, feel free to suggest enhancements!
