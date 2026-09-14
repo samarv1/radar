@@ -11,17 +11,17 @@ Usage:
 
 import time
 
-import requests
-
 from db.connection import get_connection
+from scrapers._common import BROWSER_USER_AGENT, post_with_retry
 
 ALGOLIA_APP_ID = "45BWZJ1SGC"
-ALGOLIA_API_KEY = "NzllNTY5MzJiZGM2OTY2ZTQwMDEzOTNhYWZiZGRjODlhYzVkNjBmOGRjNzJiMWM4ZTU0ZDlhYTZjOTJiMjlhMWFuYWx5dGljc1RhZ3M9eWNkYyZyZXN0cmljdEluZGljZXM9WUNDb21wYW55X3Byb2R1Y3Rpb24lMkNZQ0NvbXBhbnlfQnlfTGF1bmNoX0RhdGVfcHJvZHVjdGlvbiZ0YWdGaWx0ZXJzPSU1QiUyMnljZGNfcHVibGljJTIyJTVE"
+ALGOLIA_API_KEY = "NzJmMWExZWYxYzY5OGYwN2VkYWM5YzRiM2VlNDFlM2I0ODU2YjQ2Yjg0MTFiNWE5NzY0NTMyZGI1OWEwMzVjY2FuYWx5dGljc1RhZ3M9eWNkYyZyZXN0cmljdEluZGljZXM9WUNDb21wYW55X3Byb2R1Y3Rpb24lMkNZQ0NvbXBhbnlfQnlfTGF1bmNoX0RhdGVfcHJvZHVjdGlvbiZ0YWdGaWx0ZXJzPSU1QiUyMnljZGNfcHVibGljJTIyJTVE"
 ALGOLIA_URL = f"https://{ALGOLIA_APP_ID}-dsn.algolia.net/1/indexes/YCCompany_production/query"
 HEADERS = {
     "X-Algolia-Application-Id": ALGOLIA_APP_ID,
     "X-Algolia-API-Key": ALGOLIA_API_KEY,
     "Content-Type": "application/json",
+    "User-Agent": BROWSER_USER_AGENT,
 }
 SLEEP = 0.2
 
@@ -37,7 +37,7 @@ def fetch_hiring_companies() -> list[dict]:
             "filters": "isHiring:true",
             "attributesToRetrieve": ["name", "slug", "website", "batch"],
         }
-        resp = requests.post(ALGOLIA_URL, json=payload, headers=HEADERS, timeout=30)
+        resp = post_with_retry(ALGOLIA_URL, payload, HEADERS)
         time.sleep(SLEEP)
         if resp.status_code != 200:
             raise RuntimeError(f"Algolia request failed: {resp.status_code}")
@@ -85,9 +85,16 @@ def scrape():
         with conn.cursor() as cur:
             if matched_ids:
                 # Persist the hiring flag so companies appear on the hiring tab
-                # even before a careers ATS is discovered.
+                # even before a careers ATS is discovered. yc_is_hiring_since is only
+                # set the first time a company flips to hiring, so it reflects when we
+                # first observed the signal rather than a backfilled guess.
                 cur.execute(
-                    "UPDATE accelerator_companies SET yc_is_hiring = TRUE WHERE id = ANY(%s)",
+                    """
+                    UPDATE accelerator_companies
+                    SET yc_is_hiring = TRUE,
+                        yc_is_hiring_since = COALESCE(yc_is_hiring_since, NOW())
+                    WHERE id = ANY(%s)
+                    """,
                     (list(matched_ids),),
                 )
                 # Only reset careers_scraped_at for stale companies — avoids re-scraping
@@ -107,7 +114,7 @@ def scrape():
             cur.execute(
                 """
                 UPDATE accelerator_companies
-                SET yc_is_hiring = FALSE
+                SET yc_is_hiring = FALSE, yc_is_hiring_since = NULL
                 WHERE accelerator = 'yc'
                   AND yc_is_hiring = TRUE
                   AND id != ALL(%s)
