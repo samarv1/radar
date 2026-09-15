@@ -85,14 +85,11 @@ def scrape():
         with conn.cursor() as cur:
             if matched_ids:
                 # Persist the hiring flag so companies appear on the hiring tab
-                # even before a careers ATS is discovered. yc_is_hiring_since is only
-                # set the first time a company flips to hiring, so it reflects when we
-                # first observed the signal rather than a backfilled guess.
+                # even before a careers ATS is discovered.
                 cur.execute(
                     """
                     UPDATE accelerator_companies
-                    SET yc_is_hiring = TRUE,
-                        yc_is_hiring_since = COALESCE(yc_is_hiring_since, NOW())
+                    SET yc_is_hiring = TRUE
                     WHERE id = ANY(%s)
                     """,
                     (list(matched_ids),),
@@ -114,7 +111,7 @@ def scrape():
             cur.execute(
                 """
                 UPDATE accelerator_companies
-                SET yc_is_hiring = FALSE, yc_is_hiring_since = NULL
+                SET yc_is_hiring = FALSE
                 WHERE accelerator = 'yc'
                   AND yc_is_hiring = TRUE
                   AND id != ALL(%s)
