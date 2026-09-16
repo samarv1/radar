@@ -1,12 +1,7 @@
-"""
-Careers scraper orchestration + CLI.
+"""Careers scraper orchestration and CLI.
 
-Default mode: scrapes companies that have an EDGAR filing ≤ $100M (daily pipeline).
-Hiring sweep mode (--hiring-sweep): scrapes ALL non-excluded accelerator companies
-regardless of EDGAR status — used weekly to populate the Hiring section.
-
-Tries Greenhouse → Lever → Ashby → Workable → BambooHR for each company.
-Categorizes roles into Engineering / Product / GTM / Other.
+Default mode covers raised-feed companies. Hiring sweep mode covers all eligible
+accelerator companies. Known boards are fetched directly before site discovery.
 
 Usage:
     uv run python -m scrapers.careers [--limit N] [--hiring-sweep]
@@ -14,206 +9,195 @@ Usage:
 
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
+from typing import Literal
 
 from db.connection import get_connection
-from scrapers.careers.ats_fetchers import ATS_FETCHERS, REAL_ATS
+from scrapers.careers.ats_fetchers import ATS_FETCHERS, REAL_ATS, FetchResult
 from scrapers.careers.categorize import categorize
 from scrapers.careers.db import (
     VALID_ACCELERATORS,
-    clear_jobs,
     get_pending_companies,
     get_pending_standalone_websites,
     sync_jobs,
     update_careers_status,
     update_standalone_careers,
 )
-from scrapers.careers.discovery import discover_ats, is_likely_homepage, is_media_domain, slug_from_url
+from scrapers.careers.discovery import discover_ats_result, is_likely_homepage, is_media_domain, slug_from_url
 
 _print_lock = threading.Lock()
 
 
-def _scrape_standalone_one(company: dict, total: int, idx: int) -> bool:
-    """Scrape careers for a TC/standalone company. Saves to company_careers."""
-    name = company["name"]
+@dataclass(frozen=True)
+class CareersResolution:
+    status: Literal["success", "empty", "not_found", "transient_error"]
+    ats: str | None = None
+    url: str | None = None
+    jobs: list[dict] | None = None
+    checked_website: bool = False
+
+
+def _from_fetch(ats: str, result: FetchResult, checked_website: bool) -> CareersResolution:
+    return CareersResolution(
+        status=result.status,
+        ats=ats,
+        url=result.board_url,
+        jobs=result.jobs,
+        checked_website=checked_website,
+    )
+
+
+def resolve_careers(company: dict) -> CareersResolution:
+    """Resolve a company to one authoritative board outcome."""
     website = company["website"]
     known_ats = company.get("careers_ats")
     known_url = company.get("careers_url")
-
-    matched_ats = None
-    matched_jobs = []
-    matched_url = None
-    fallback_careers_url = None
-
     valid_website = (
         bool(website)
         and is_likely_homepage(website)
         and not is_media_domain(website)
     )
 
-    # Fast-path: ATS already known from a previous scrape.
     if known_ats in REAL_ATS and known_url:
         slug = slug_from_url(known_ats, known_url)
         if slug:
             result = ATS_FETCHERS[known_ats](slug)
-            if result is not None:
-                matched_jobs, matched_url = result
-                matched_ats = known_ats
+            if result.status != "not_found":
+                return _from_fetch(known_ats, result, valid_website)
 
-    if matched_ats is None:
-        if valid_website:
-            ats_name, slug, url = discover_ats(website)
-            if ats_name:
-                fetcher = ATS_FETCHERS.get(ats_name)
-                if fetcher:
-                    result = fetcher(slug)
-                    if result is not None:
-                        matched_jobs, matched_url = result
-                        matched_ats = ats_name
-                    else:
-                        matched_ats = ats_name
-                        matched_url = url
-            elif url:
-                fallback_careers_url = url
-        elif website:
-            with _print_lock:
-                print(f"[{idx}/{total}] {name} (standalone) → skipped bad URL: {website}")
+    if not valid_website:
+        return CareersResolution("not_found")
 
-    conn = get_connection()
-    try:
-        if matched_ats:
-            update_standalone_careers(conn, website, matched_ats, matched_url)
-            conn.commit()
-            cats = {}
-            for j in matched_jobs:
-                c = categorize(j["title"])
-                cats[c] = cats.get(c, 0) + 1
-            summary = " | ".join(f"{k}:{v}" for k, v in sorted(cats.items()))
-            with _print_lock:
-                print(f"[{idx}/{total}] {name} (standalone) → {matched_ats} ({len(matched_jobs)} jobs) [{summary}]")
-            return True
-        else:
-            ats_status = "not_found" if valid_website else None
-            update_standalone_careers(conn, website, ats_status, fallback_careers_url)
-            conn.commit()
-            with _print_lock:
-                fallback_note = f" → {fallback_careers_url}" if fallback_careers_url else ""
-                label = "not found" if valid_website else "no valid website"
-                print(f"[{idx}/{total}] {name} (standalone) → {label}{fallback_note}")
-            return False
-    finally:
-        conn.close()
+    discovery = discover_ats_result(website)
+    if discovery.status == "transient_error":
+        return CareersResolution("transient_error")
+    if not discovery.ats or not discovery.slug:
+        return CareersResolution("not_found", url=discovery.url, checked_website=True)
+
+    result = ATS_FETCHERS[discovery.ats](discovery.slug)
+    return _from_fetch(discovery.ats, result, checked_website=True)
 
 
-def _scrape_one(company: dict, total: int, idx: int) -> bool:
-    """Scrape a single company using its own DB connection. Returns True if found."""
+def _job_summary(jobs: list[dict]) -> str:
+    counts: dict[str, int] = {}
+    for job in jobs:
+        category = categorize(job["title"])
+        counts[category] = counts.get(category, 0) + 1
+    return " | ".join(f"{key}:{value}" for key, value in sorted(counts.items()))
+
+
+def _scrape_standalone_one(company: dict, total: int, idx: int, conn=None) -> bool:
     name = company["name"]
     website = company["website"]
+    resolution = resolve_careers(company)
+    owns_connection = conn is None
+    conn = conn or get_connection()
+    try:
+        if resolution.status == "transient_error":
+            conn.rollback()
+            with _print_lock:
+                print(f"[{idx}/{total}] {name} (standalone) → temporary fetch error")
+            return False
+        if resolution.status in {"success", "empty"}:
+            update_standalone_careers(conn, website, resolution.ats, resolution.url)
+            conn.commit()
+            jobs = resolution.jobs or []
+            with _print_lock:
+                print(f"[{idx}/{total}] {name} (standalone) → {resolution.ats} ({len(jobs)} jobs) [{_job_summary(jobs)}]")
+            return True
+
+        status = "not_found" if resolution.checked_website else None
+        update_standalone_careers(conn, website, status, resolution.url)
+        conn.commit()
+        with _print_lock:
+            fallback_note = f" → {resolution.url}" if resolution.url else ""
+            label = "not found" if resolution.checked_website else "no valid website"
+            print(f"[{idx}/{total}] {name} (standalone) → {label}{fallback_note}")
+        return False
+    finally:
+        if owns_connection:
+            conn.close()
+
+
+def _scrape_one(company: dict, total: int, idx: int, conn=None) -> bool:
+    name = company["name"]
     cid = company["id"]
-    known_ats = company.get("careers_ats")
-    known_url = company.get("careers_url")
-
-    matched_ats = None
-    matched_jobs = []
-    matched_url = None
-    fallback_careers_url = None
-
-    valid_website = (
-        bool(website)
-        and is_likely_homepage(website)
-        and not is_media_domain(website)
-    )
-
-    # Fast-path: ATS + slug already known — one API call, no discovery.
-    # Falls through to full discovery if the fetch returns None (board moved/removed).
-    if known_ats in REAL_ATS and known_url:
-        slug = slug_from_url(known_ats, known_url)
-        if slug:
-            result = ATS_FETCHERS[known_ats](slug)
-            if result is not None:
-                matched_jobs, matched_url = result
-                matched_ats = known_ats
-
-    if matched_ats is None:
-        if valid_website:
-            ats_name, slug, url = discover_ats(website)
-            if ats_name:
-                fetcher = ATS_FETCHERS.get(ats_name)
-                if fetcher:
-                    result = fetcher(slug)
-                    if result is not None:
-                        matched_jobs, matched_url = result
-                        matched_ats = ats_name
-                    else:
-                        matched_ats = ats_name
-                        matched_url = url
-            elif url:
-                # Found a careers page but ATS isn't one we support — save the URL so
-                # the UI can at least link to it with "apply ↗".
-                fallback_careers_url = url
-        elif website:
+    resolution = resolve_careers(company)
+    owns_connection = conn is None
+    conn = conn or get_connection()
+    try:
+        if resolution.status == "transient_error":
+            conn.rollback()
             with _print_lock:
-                print(f"[{idx}/{total}] {name} → skipped bad URL: {website}")
+                print(f"[{idx}/{total}] {name} → temporary fetch error")
+            return False
+        if resolution.status in {"success", "empty"}:
+            jobs = resolution.jobs or []
+            sync_jobs(conn, cid, resolution.ats, jobs)
+            update_careers_status(conn, cid, resolution.ats, resolution.url)
+            conn.commit()
+            with _print_lock:
+                print(f"[{idx}/{total}] {name} → {resolution.ats} ({len(jobs)} jobs) [{_job_summary(jobs)}]")
+            return True
 
+        status = "not_found" if resolution.checked_website else None
+        update_careers_status(conn, cid, status, resolution.url)
+        conn.commit()
+        with _print_lock:
+            fallback_note = f" → {resolution.url}" if resolution.url else ""
+            label = "not found" if resolution.checked_website else "no valid website"
+            print(f"[{idx}/{total}] {name} → {label}{fallback_note}")
+        return False
+    finally:
+        if owns_connection:
+            conn.close()
+
+
+def _run_chunk(indexed_items: list[tuple[int, dict]], total: int, fn) -> tuple[int, int]:
+    found = not_found = 0
     conn = get_connection()
     try:
-        if matched_ats:
-            sync_jobs(conn, cid, matched_ats, matched_jobs)
-            update_careers_status(conn, cid, matched_ats, matched_url)
-            conn.commit()
-
-            cats = {}
-            for j in matched_jobs:
-                c = categorize(j["title"])
-                cats[c] = cats.get(c, 0) + 1
-            summary = " | ".join(f"{k}:{v}" for k, v in sorted(cats.items()))
-            with _print_lock:
-                print(f"[{idx}/{total}] {name} → {matched_ats} ({len(matched_jobs)} jobs) [{summary}]")
-            return True
-        else:
-            clear_jobs(conn, cid)
-            # Only mark 'not_found' if we actually checked a valid company website.
-            # No website or a bad URL → leave careers_ats as NULL (unknown, not 'not hiring').
-            ats_status = "not_found" if valid_website else None
-            # Preserve any fallback URL so the UI can show "apply ↗" even when we
-            # can't count roles (e.g. company uses Rippling, Teamtailor, etc.).
-            update_careers_status(conn, cid, ats_status, fallback_careers_url)
-            conn.commit()
-            with _print_lock:
-                fallback_note = f" → {fallback_careers_url}" if fallback_careers_url else ""
-                label = "not found" if valid_website else "no valid website"
-                print(f"[{idx}/{total}] {name} → {label}{fallback_note}")
-            return False
+        for index, item in indexed_items:
+            try:
+                if fn(item, total, index, conn=conn):
+                    found += 1
+                else:
+                    not_found += 1
+            except Exception as error:
+                conn.rollback()
+                with _print_lock:
+                    print(f"  ERROR {item.get('name', item.get('website', '?'))}: {error}")
+                not_found += 1
     finally:
         conn.close()
+    return found, not_found
 
 
 def _run_batch(items: list[dict], fn, workers: int) -> tuple[int, int]:
-    """Run a scrape function over a list of items, returning (found, not_found)."""
-    found = not_found = 0
+    """Run a scrape batch with one reusable database connection per worker."""
     total = len(items)
-    if workers <= 1:
-        for i, item in enumerate(items):
-            if fn(item, total, i + 1):
-                found += 1
-            else:
-                not_found += 1
-    else:
-        with ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = {
-                executor.submit(fn, item, total, i + 1): item
-                for i, item in enumerate(items)
-            }
-            for future in as_completed(futures):
-                try:
-                    if future.result():
-                        found += 1
-                    else:
-                        not_found += 1
-                except Exception as e:
-                    item = futures[future]
-                    with _print_lock:
-                        print(f"  ERROR {item.get('name', item.get('website', '?'))}: {e}")
-                    not_found += 1
+    if not items:
+        return 0, 0
+
+    indexed = list(enumerate(items, start=1))
+    worker_count = min(max(workers, 1), total)
+    chunks = [indexed[offset::worker_count] for offset in range(worker_count)]
+    if worker_count == 1:
+        return _run_chunk(chunks[0], total, fn)
+
+    found = not_found = 0
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        futures = {executor.submit(_run_chunk, chunk, total, fn): chunk for chunk in chunks}
+        for future in as_completed(futures):
+            try:
+                chunk_found, chunk_not_found = future.result()
+                found += chunk_found
+                not_found += chunk_not_found
+            except Exception as error:
+                chunk = futures[future]
+                with _print_lock:
+                    print(f"  ERROR worker starting at item {chunk[0][0]}: {error}")
+                not_found += len(chunk)
     return found, not_found
 
 

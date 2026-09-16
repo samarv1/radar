@@ -24,7 +24,7 @@ import xml.etree.ElementTree as ET
 import requests
 
 from db.connection import get_connection
-from scrapers.techcrunch import find_match, load_accelerator_index
+from scrapers.company_names import find_company_match, normalize_company_name
 
 RSS_URL = "https://a16zbuild.substack.com/feed"
 HEADERS = {
@@ -58,8 +58,19 @@ _JOB_WORDS = {
     "assistant", "producer", "series", "loop", "stealth",
 }
 
-# Common English function words — if any appear after the first word, it's not a company name
 _FUNCTION_WORDS = {"in", "the", "a", "an", "of", "at", "for", "to", "with", "and", "or", "on", "by", "from", "its"}
+
+
+def load_accelerator_index(conn):
+    with conn.cursor() as cur:
+        cur.execute("SELECT id, name FROM accelerator_companies")
+        rows = cur.fetchall()
+    return [row[0] for row in rows], [normalize_company_name(row[1]) for row in rows]
+
+
+def find_match(company_name: str, ids, names_norm) -> int | None:
+    result = find_company_match(company_name, names_norm, threshold=90)
+    return ids[result[0]] if result else None
 
 
 class _CompanyLinks(HTMLParser):
@@ -147,7 +158,6 @@ def fetch_rss(days_back: int) -> list[dict]:
         except Exception:
             continue
 
-        # parsedate_to_datetime may return naive or aware datetime
         if pub_date.tzinfo is None:
             pub_date = pub_date.replace(tzinfo=timezone.utc)
         if pub_date < cutoff:
@@ -228,8 +238,7 @@ def scrape(days_back: int = 30):
                 else:
                     updated += 1
 
-        # Reset careers_scraped_at for matched companies so the next careers
-        # sweep re-scrapes them promptly (they're confirmed to be hiring now).
+        # Confirmed hiring signals bypass the normal careers refresh cooldown.
         if matched_acc_ids:
             with conn.cursor() as cur:
                 cur.execute(

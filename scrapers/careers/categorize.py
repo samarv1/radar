@@ -1,6 +1,11 @@
-"""Buckets a job title into intern / new_grad / engineering / product / gtm / other."""
+"""Classify job titles by function and seniority."""
 
 import re
+from dataclasses import dataclass
+from typing import Literal
+
+RoleType = Literal["engineering", "product", "gtm", "other"]
+RoleLevel = Literal["intern", "new_grad", "experienced"]
 
 INTERN = re.compile(
     r"\b(intern|internship|co-?op|apprentice|apprenticeship)\b",
@@ -39,15 +44,35 @@ GTM = re.compile(
 )
 
 
-def categorize(title: str) -> str:
-    if INTERN.search(title):
-        return "intern"
-    if NEW_GRAD.search(title):
-        return "new_grad"
+@dataclass(frozen=True)
+class JobClassification:
+    role_type: RoleType
+    role_level: RoleLevel
+
+
+def classify(title: str) -> JobClassification:
     if ENGINEERING.search(title):
-        return "engineering"
-    if PRODUCT.search(title):
-        return "product"
-    if GTM.search(title):
-        return "gtm"
-    return "other"
+        role_type: RoleType = "engineering"
+    elif PRODUCT.search(title):
+        role_type = "product"
+    elif GTM.search(title):
+        role_type = "gtm"
+    else:
+        role_type = "other"
+
+    if INTERN.search(title):
+        role_level: RoleLevel = "intern"
+    elif NEW_GRAD.search(title):
+        role_level = "new_grad"
+    else:
+        role_level = "experienced"
+
+    return JobClassification(role_type=role_type, role_level=role_level)
+
+
+def categorize(title: str) -> str:
+    """Return the legacy exclusive category while callers migrate."""
+    classification = classify(title)
+    if classification.role_level != "experienced":
+        return classification.role_level
+    return classification.role_type

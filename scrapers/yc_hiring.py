@@ -84,8 +84,7 @@ def scrape():
         reset_count = 0
         with conn.cursor() as cur:
             if matched_ids:
-                # Persist the hiring flag so companies appear on the hiring tab
-                # even before a careers ATS is discovered.
+                # The YC signal can precede careers-board discovery.
                 cur.execute(
                     """
                     UPDATE accelerator_companies
@@ -94,8 +93,7 @@ def scrape():
                     """,
                     (list(matched_ids),),
                 )
-                # Only reset careers_scraped_at for stale companies — avoids re-scraping
-                # the entire hiring cohort every day.
+                # Preserve the refresh cooldown for recently scraped companies.
                 cur.execute(
                     """
                     UPDATE accelerator_companies

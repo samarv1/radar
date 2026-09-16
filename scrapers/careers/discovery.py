@@ -9,6 +9,8 @@ company's own redirect chain or an embedded link.
 
 import re
 import time
+from dataclasses import dataclass
+from typing import Literal
 from urllib.parse import urlparse
 
 import requests
@@ -43,6 +45,14 @@ _MEDIA_NETLOCS = {
     "apps.apple.com", "itunes.apple.com", "play.google.com",
     "producthunt.com", "ycombinator.com",
 }
+
+
+@dataclass(frozen=True)
+class DiscoveryResult:
+    status: Literal["success", "not_found", "transient_error"]
+    ats: str | None = None
+    slug: str | None = None
+    url: str | None = None
 
 
 def is_media_domain(url: str) -> bool:
@@ -83,44 +93,47 @@ def _board_url(ats: str, slug: str) -> str:
     return ""
 
 
-def discover_ats(website: str) -> tuple[str | None, str | None, str | None]:
-    """Return (ats_name, slug, url) by following links from company's own website.
-
-    When a recognized ATS is found: all three values are set.
-    When a careers page is found but ATS is unrecognized: ats_name and slug are None,
-    url is the careers page URL (so we can still surface a link to the user).
-    When nothing is found: all three are None.
-
-    No slug guessing — the slug comes directly from the company's own redirect
-    chain or embedded link.
-    """
+def discover_ats_result(website: str) -> DiscoveryResult:
+    """Find an ATS from company-controlled redirects or embedded links."""
     base = website.rstrip("/")
     if not base.startswith("http"):
         base = "https://" + base
 
     fallback_url: str | None = None
+    transient_failures = 0
 
     for path in _CAREERS_PATHS:
         try:
             r = requests.get(base + path, headers=HEADERS, timeout=10, allow_redirects=True)
             time.sleep(SLEEP)
+            if r.status_code == 429 or r.status_code >= 500:
+                transient_failures += 1
+                continue
             for ats, pattern in _ATS_PATTERNS:
                 m = pattern.search(r.url)
                 if m:
                     slug = m.group(1).strip("/")
-                    return ats, slug, _board_url(ats, slug)
+                    return DiscoveryResult("success", ats, slug, _board_url(ats, slug))
             if r.status_code == 200 and len(r.content) < 2_000_000:
                 for ats, pattern in _ATS_PATTERNS:
                     m = pattern.search(r.text)
                     if m:
                         slug = m.group(1).strip("/")
-                        return ats, slug, _board_url(ats, slug)
-                # Keep the first valid careers URL as fallback
+                        return DiscoveryResult("success", ats, slug, _board_url(ats, slug))
                 if fallback_url is None and not is_media_domain(r.url):
                     fallback_url = r.url
-        except Exception:
-            pass
-    return None, None, fallback_url
+        except requests.RequestException:
+            transient_failures += 1
+
+    if transient_failures and fallback_url is None:
+        return DiscoveryResult("transient_error")
+    return DiscoveryResult("not_found", url=fallback_url)
+
+
+def discover_ats(website: str) -> tuple[str | None, str | None, str | None]:
+    """Return the legacy tuple form of ATS discovery."""
+    result = discover_ats_result(website)
+    return result.ats, result.slug, result.url
 
 
 def slug_from_url(ats: str, url: str) -> str | None:
