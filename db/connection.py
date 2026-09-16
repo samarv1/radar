@@ -24,16 +24,3 @@ def get_connection(url: str | None = None):
         raise RuntimeError("DATABASE_URL not set in environment")
     _log_target(url)
     return psycopg2.connect(url)
-
-
-def apply_schema(url: str | None = None):
-    schema_path = os.path.join(os.path.dirname(__file__), "schema.sql")
-    with open(schema_path) as f:
-        sql = f.read()
-    conn = get_connection(url)
-    try:
-        with conn.cursor() as cur:
-            cur.execute(sql)
-        conn.commit()
-    finally:
-        conn.close()
