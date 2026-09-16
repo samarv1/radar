@@ -2,8 +2,6 @@ import { Pool } from "pg";
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 5 });
 
-// Deduplicates accelerator_companies by normalized website, aggregates all
-// accelerators into an array, and surfaces the worst company_status.
 const ACCEL_META_CTE = `
   accel_meta AS (
     SELECT
@@ -16,28 +14,24 @@ const ACCEL_META_CTE = `
     GROUP BY 1
   )`;
 
-// Job counts with all categories, plus timing columns for recency filtering and sorting.
-const JOB_COUNTS_FULL = `
+const JOB_COUNTS_CTE = `
+  job_counts AS (
   SELECT company_id,
-    SUM(CASE WHEN category = 'engineering' THEN 1 ELSE 0 END) AS eng,
-    SUM(CASE WHEN category = 'product'     THEN 1 ELSE 0 END) AS product,
-    SUM(CASE WHEN category = 'gtm'         THEN 1 ELSE 0 END) AS gtm,
-    SUM(CASE WHEN category = 'other'       THEN 1 ELSE 0 END) AS other,
-    SUM(CASE WHEN category = 'intern'      THEN 1 ELSE 0 END) AS intern,
-    SUM(CASE WHEN category = 'new_grad'    THEN 1 ELSE 0 END) AS new_grad,
+    COUNT(*) FILTER (WHERE role_type = 'engineering') AS eng,
+    COUNT(*) FILTER (WHERE role_type = 'product') AS product,
+    COUNT(*) FILTER (WHERE role_type = 'gtm') AS gtm,
+    COUNT(*) FILTER (WHERE role_type = 'other') AS other,
+    COUNT(*) FILTER (WHERE role_level = 'intern') AS intern,
+    COUNT(*) FILTER (WHERE role_level = 'new_grad') AS new_grad,
+    COUNT(*) FILTER (WHERE role_level = 'experienced') AS experienced,
+    array_agg(DISTINCT role_type || ':' || role_level ORDER BY role_type || ':' || role_level) AS role_facets,
     MAX(posted_at)      AS latest_posted_at,
     MAX(first_seen_at)  AS latest_first_seen_at,
     MAX(scraped_at)     AS latest_scraped_at
-  FROM job_listings GROUP BY company_id`;
+  FROM job_listings GROUP BY company_id
+  )`;
 
-// Job counts for the four main role categories only, no timing columns.
-const JOB_COUNTS_BASIC = `
-  SELECT company_id,
-    SUM(CASE WHEN category = 'engineering' THEN 1 ELSE 0 END) AS eng,
-    SUM(CASE WHEN category = 'product'     THEN 1 ELSE 0 END) AS product,
-    SUM(CASE WHEN category = 'gtm'         THEN 1 ELSE 0 END) AS gtm,
-    SUM(CASE WHEN category = 'other'       THEN 1 ELSE 0 END) AS other
-  FROM job_listings GROUP BY company_id`;
+export type DateSource = "raised" | "announced" | "posted" | "discovered" | "scraped";
 
 export type Company = {
   id: number;
@@ -46,21 +40,21 @@ export type Company = {
   accelerator: string;
   accelerators: string[];
   batch: string | null;
-  careers_ats: string | null;
   careers_url: string | null;
   amount_raised: number | null;
   round_type: string | null;
   date_filed: string;
-  date_source?: string;
-  created_at: string;
-  company_status: string | null;
+  date_source: DateSource;
   has_edgar: boolean;
+  role_counts_authoritative: boolean;
   eng_count: number;
   product_count: number;
   gtm_count: number;
   other_count: number;
   intern_count: number;
   new_grad_count: number;
+  experienced_count: number;
+  role_facets: string[];
   tags: string[] | null;
   location_tag: string | null;
 };
@@ -68,14 +62,18 @@ export type Company = {
 
 export async function getHiringFeed(): Promise<Company[]> {
   const { rows } = await pool.query<Company>(`
-    WITH ${ACCEL_META_CTE}
-    SELECT * FROM (
+    WITH ${ACCEL_META_CTE}, ${JOB_COUNTS_CTE}
+    SELECT
+      id, name, website, accelerator, accelerators, batch, careers_url,
+      tags, amount_raised, round_type, date_filed, date_source, has_edgar,
+      role_counts_authoritative, eng_count, product_count, gtm_count, other_count,
+      intern_count, new_grad_count, experienced_count, role_facets, location_tag
+    FROM (
       SELECT DISTINCT ON (COALESCE(am.norm_site, a.id::text))
         a.id, a.name, COALESCE(a.website, fn_site.website) AS website,
         a.accelerator,
         COALESCE(am.accelerators, ARRAY[a.accelerator]) AS accelerators,
-        a.batch, a.careers_ats, a.careers_url, a.created_at::text,
-        a.tags, a.company_status,
+        a.batch, a.careers_url, a.tags,
         COALESCE(ef_latest.amount_raised, fn_amt.amount_usd)::float AS amount_raised,
         a.round_type AS round_type,
         COALESCE(h.latest_posted_at::text, h.latest_first_seen_at::text, a.careers_scraped_at::text) AS date_filed,
@@ -85,12 +83,15 @@ export async function getHiringFeed(): Promise<Company[]> {
           ELSE 'scraped'
         END AS date_source,
         FALSE AS has_edgar,
+        TRUE AS role_counts_authoritative,
         COALESCE(h.eng, 0)::int      AS eng_count,
         COALESCE(h.product, 0)::int  AS product_count,
         COALESCE(h.gtm, 0)::int      AS gtm_count,
         COALESCE(h.other, 0)::int    AS other_count,
         COALESCE(h.intern, 0)::int   AS intern_count,
         COALESCE(h.new_grad, 0)::int AS new_grad_count,
+        COALESCE(h.experienced, 0)::int AS experienced_count,
+        COALESCE(h.role_facets, ARRAY[]::text[]) AS role_facets,
         a.location_tag,
         h.latest_posted_at, h.latest_first_seen_at, h.latest_scraped_at
       FROM accelerator_companies a
@@ -111,21 +112,13 @@ export async function getHiringFeed(): Promise<Company[]> {
         WHERE accelerator_id = a.id AND amount_usd IS NOT NULL
         ORDER BY published_at DESC LIMIT 1
       ) fn_amt ON TRUE
-      JOIN (${JOB_COUNTS_FULL}) h ON h.company_id = a.id
+      JOIN job_counts h ON h.company_id = a.id
       WHERE a.is_excluded = FALSE
+        AND (h.eng + h.product + h.gtm + h.other) > 0
+        AND COALESCE(h.latest_posted_at, h.latest_first_seen_at, h.latest_scraped_at) >= NOW() - INTERVAL '90 days'
         AND (
-          -- Companies with confirmed open roles scraped in the last 90 days
-          (COALESCE(h.eng, 0) + COALESCE(h.product, 0) + COALESCE(h.gtm, 0) + COALESCE(h.other, 0) + COALESCE(h.intern, 0) + COALESCE(h.new_grad, 0)) > 0
-          AND COALESCE(h.latest_posted_at, h.latest_first_seen_at, h.latest_scraped_at) >= NOW() - INTERVAL '90 days'
-          -- TODO: also surface yc_is_hiring=true companies once we track yc_is_hiring_since
-          -- so we can apply a matching 90-day recency gate on the hiring signal itself.
-          -- OR (a.yc_is_hiring = TRUE AND a.yc_is_hiring_since >= NOW() - INTERVAL '90 days')
-        )
-        AND (
-          -- companies with a website group: exclude if any entry has a bad status
           (am.norm_site IS NOT NULL AND am.worst_status IS NULL)
           OR
-          -- companies without a website (no group): check individual status
           (am.norm_site IS NULL AND (a.company_status IS NULL OR a.company_status = 'Active'))
         )
         AND (
@@ -139,42 +132,49 @@ export async function getHiringFeed(): Promise<Company[]> {
         )
       ORDER BY COALESCE(am.norm_site, a.id::text),
                COALESCE(h.latest_posted_at, h.latest_first_seen_at, h.latest_scraped_at) DESC NULLS LAST
-    ) deduped
-    ORDER BY COALESCE(latest_posted_at, latest_first_seen_at, latest_scraped_at) DESC NULLS LAST
+    ) AS deduped
+    ORDER BY COALESCE(latest_posted_at, latest_first_seen_at, latest_scraped_at) DESC NULLS LAST, id
   `);
   return rows;
 }
 
 export async function getFeed(): Promise<Company[]> {
   const { rows } = await pool.query<Company>(`
-    WITH ${ACCEL_META_CTE}
-    SELECT * FROM (
-      -- Accelerator-backed companies with EDGAR filings (deduped by website)
+    WITH ${ACCEL_META_CTE}, ${JOB_COUNTS_CTE}
+    SELECT
+      id, name, website, accelerator, accelerators, batch, careers_url,
+      amount_raised, round_type, date_filed, date_source, has_edgar,
+      role_counts_authoritative, eng_count, product_count, gtm_count, other_count,
+      intern_count, new_grad_count, experienced_count, role_facets, tags, location_tag
+    FROM (
       SELECT * FROM (
         SELECT DISTINCT ON (COALESCE(am.norm_site, a.id::text))
           a.id, a.name, COALESCE(a.website, fn_site.website) AS website,
           a.accelerator,
           COALESCE(am.accelerators, ARRAY[a.accelerator]) AS accelerators,
-          a.batch, a.careers_ats, a.careers_url, a.created_at::text,
-          a.company_status,
+          a.batch, a.careers_url,
           COALESCE(e.amount_raised, fn_round.amount_usd)::float AS amount_raised,
           COALESCE(fn_round.round_type, a.round_type) AS round_type,
           e.date_filed::text,
           'raised'::text AS date_source,
           TRUE AS has_edgar,
+          (a.careers_scraped_at IS NOT NULL AND a.careers_ats IS NOT NULL
+            AND a.careers_ats != 'not_found') AS role_counts_authoritative,
           COALESCE(h.eng, 0)::int     AS eng_count,
           COALESCE(h.product, 0)::int AS product_count,
           COALESCE(h.gtm, 0)::int     AS gtm_count,
           COALESCE(h.other, 0)::int   AS other_count,
-          0::int AS intern_count,
-          0::int AS new_grad_count,
+          COALESCE(h.intern, 0)::int AS intern_count,
+          COALESCE(h.new_grad, 0)::int AS new_grad_count,
+          COALESCE(h.experienced, 0)::int AS experienced_count,
+          COALESCE(h.role_facets, ARRAY[]::text[]) AS role_facets,
           a.tags,
           a.location_tag
         FROM accelerator_companies a
         JOIN edgar_filings e ON e.accelerator_id = a.id
         LEFT JOIN accel_meta am
           ON regexp_replace(lower(a.website), '^https?://(www\\.)?|/+$', '', 'g') = am.norm_site
-        LEFT JOIN (${JOB_COUNTS_BASIC}) h ON h.company_id = a.id
+        LEFT JOIN job_counts h ON h.company_id = a.id
         LEFT JOIN LATERAL (
           SELECT round_type, amount_usd FROM funding_news
           WHERE accelerator_id = a.id AND round_type IS NOT NULL
@@ -192,12 +192,10 @@ export async function getFeed(): Promise<Company[]> {
             OR (am.norm_site IS NULL AND (a.company_status IS NULL OR a.company_status = 'Active'))
           )
         ORDER BY COALESCE(am.norm_site, a.id::text), e.date_filed DESC
-      ) accel_inner
-    ) accel
+      ) accel
 
     UNION ALL
 
-    -- Non-accelerator EDGAR filings validated by TC/PH match or Other Technology industry group
     SELECT * FROM (
       SELECT DISTINCT ON (ef.company_name)
         -ef.id        AS id,
@@ -206,21 +204,21 @@ export async function getFeed(): Promise<Company[]> {
         ef.standalone_source AS accelerator,
         ARRAY[ef.standalone_source]::text[] AS accelerators,
         NULL::text    AS batch,
-        cc.careers_ats AS careers_ats,
         cc.careers_url AS careers_url,
-        ef.created_at::text,
-        NULL::text    AS company_status,
         ef.amount_raised::float AS amount_raised,
         fn.round_type AS round_type,
         ef.date_filed::text,
         'raised'::text AS date_source,
         TRUE AS has_edgar,
+        FALSE AS role_counts_authoritative,
         0::int AS eng_count,
         0::int AS product_count,
         0::int AS gtm_count,
         0::int AS other_count,
         0::int AS intern_count,
         0::int AS new_grad_count,
+        0::int AS experienced_count,
+        ARRAY[]::text[] AS role_facets,
         CASE ef.industry_group
           WHEN 'Other Technology'                    THEN ARRAY['saas', 'b2b']
           WHEN 'Computers'                           THEN ARRAY['saas', 'hardware']
@@ -256,10 +254,6 @@ export async function getFeed(): Promise<Company[]> {
 
     UNION ALL
 
-    -- funding_news-announced companies without a Form D filing yet (TechCrunch, Signalbase, etc.).
-    -- Quality filters: real funding amount, short name (not a descriptor fragment),
-    -- no comma/colon in name (descriptor prefix pattern), no VC fund keywords.
-    -- Excludes companies already in the standalone EDGAR path to avoid duplicates.
     SELECT * FROM (
       SELECT DISTINCT ON (fn.company_name)
         fn.id + 1000000 AS id,
@@ -268,21 +262,21 @@ export async function getFeed(): Promise<Company[]> {
         fn.source       AS accelerator,
         ARRAY[fn.source]::text[] AS accelerators,
         NULL::text      AS batch,
-        cc.careers_ats  AS careers_ats,
         cc.careers_url  AS careers_url,
-        fn.created_at::text,
-        NULL::text      AS company_status,
         fn.amount_usd::float AS amount_raised,
         fn.round_type   AS round_type,
         fn.published_at::text AS date_filed,
         'announced'::text AS date_source,
         FALSE AS has_edgar,
+        FALSE AS role_counts_authoritative,
         0::int AS eng_count,
         0::int AS product_count,
         0::int AS gtm_count,
         0::int AS other_count,
         0::int AS intern_count,
         0::int AS new_grad_count,
+        0::int AS experienced_count,
+        ARRAY[]::text[] AS role_facets,
         CASE
           WHEN fn.industry IN ('Financial Services', 'Payment Solutions')
             THEN ARRAY['fintech', 'payments']
@@ -320,7 +314,6 @@ export async function getFeed(): Promise<Company[]> {
         AND fn.company_name !~* '\y(capital|fund|venture|ventures|partner|partners|vc)\y'
         AND fn.round_type IS NOT NULL
         AND fn.round_type NOT IN ('Series D', 'Series E')
-        AND NOT (fn.round_type = 'Pre-Seed' AND fn.amount_usd IS NULL)
         AND (
           fn.source != 'signalbase'
           OR fn.industry IS NULL
@@ -349,31 +342,31 @@ export async function getFeed(): Promise<Company[]> {
 
     UNION ALL
 
-    -- Accelerator-backed companies announced in TC but no Form D filed yet.
-    -- Shows the real accelerator badge (YC, a16z, etc.) with "announced" label.
-    -- Excluded once they file Form D (they'll appear in the first branch instead).
     SELECT * FROM (
       SELECT DISTINCT ON (a.id)
         a.id, a.name, COALESCE(a.website, fn.website) AS website, a.accelerator,
         ARRAY[a.accelerator]::text[] AS accelerators,
-        a.batch, a.careers_ats, a.careers_url, a.created_at::text,
-        a.company_status,
+        a.batch, a.careers_url,
         fn.amount_usd::float AS amount_raised,
         fn.round_type   AS round_type,
         fn.published_at::text AS date_filed,
         'announced'::text AS date_source,
         FALSE AS has_edgar,
+        (a.careers_scraped_at IS NOT NULL AND a.careers_ats IS NOT NULL
+          AND a.careers_ats != 'not_found') AS role_counts_authoritative,
         COALESCE(h.eng, 0)::int     AS eng_count,
         COALESCE(h.product, 0)::int AS product_count,
         COALESCE(h.gtm, 0)::int     AS gtm_count,
         COALESCE(h.other, 0)::int   AS other_count,
-        0::int AS intern_count,
-        0::int AS new_grad_count,
+        COALESCE(h.intern, 0)::int AS intern_count,
+        COALESCE(h.new_grad, 0)::int AS new_grad_count,
+        COALESCE(h.experienced, 0)::int AS experienced_count,
+        COALESCE(h.role_facets, ARRAY[]::text[]) AS role_facets,
         a.tags,
         a.location_tag
       FROM accelerator_companies a
       JOIN funding_news fn ON fn.accelerator_id = a.id
-      LEFT JOIN (${JOB_COUNTS_BASIC}) h ON h.company_id = a.id
+      LEFT JOIN job_counts h ON h.company_id = a.id
       WHERE a.is_excluded = FALSE
         AND fn.source != 'a16z_build'
         AND fn.published_at >= NOW() - INTERVAL '90 days'
@@ -382,7 +375,8 @@ export async function getFeed(): Promise<Company[]> {
         )
       ORDER BY a.id, fn.published_at DESC
     ) accel_announced
-
+    ) AS feed
+    ORDER BY date_filed DESC, id
   `);
   return rows;
 }

@@ -1,8 +1,5 @@
 "use client";
 
-// TODO (SSO): Replace localStorage with an API-backed implementation
-// (/api/bookmarks GET/POST/DELETE) keyed by user session once SSO is introduced.
-
 import { useState, useCallback } from "react";
 
 const STORAGE_KEY = "radar_bookmarks";

@@ -1,134 +1,21 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { Radar, Bookmark, ChevronLeft, ChevronRight } from "lucide-react";
-import { FilterBar, HiringFilterBar, DEFAULT_FILTERS, VERTICAL_KEYWORDS, tagMatchesKeyword, normalizeRoundType, type Filters } from "@/components/FilterBar";
+import { FilterBar, HiringFilterBar } from "@/components/FilterBar";
 import { CompanyCard } from "@/components/CompanyCard";
 import { useBookmarks } from "@/lib/useBookmarks";
 import type { Company } from "@/lib/db";
+import {
+  applyFilters,
+  applyHiringFilters,
+  byDateDesc,
+  byHiringDate,
+  DEFAULT_FILTERS,
+  type Filters,
+} from "@/lib/feed";
 
 const PAGE_SIZE = 15;
-
-function hiringStatus(c: Company): "yes" | "no" | "unknown" {
-  const hasData = c.careers_ats && c.careers_ats !== "not_found";
-  if (!hasData) return "unknown";
-  const total = c.eng_count + c.gtm_count + c.product_count + c.other_count;
-  return total > 0 ? "yes" : "no";
-}
-
-const KNOWN_ACCELERATORS = ["yc", "a16z", "sequoia", "pear", "lightspeed", "techstars"];
-
-function matchesVertical(tags: string[] | null, verticals: string[]): boolean {
-  const hasNoTags = !tags || tags.length === 0;
-  if (verticals.includes("unknown") && hasNoTags) return true;
-  if (hasNoTags) return false;
-  return verticals.some(
-    (v) =>
-      v !== "unknown" &&
-      VERTICAL_KEYWORDS[v].some((kw) =>
-        tags.some((t) => tagMatchesKeyword(t, kw))
-      )
-  );
-}
-
-function applyFilters(companies: Company[], f: Filters): Company[] {
-  return companies.filter((c) => {
-    if (f.accelerators.length > 0) {
-      const accels = c.accelerators ?? [c.accelerator];
-      const isKnown = accels.some(a => KNOWN_ACCELERATORS.includes(a));
-      const matchesAccel = accels.some(a => f.accelerators.includes(a));
-      const matchesUnknown = f.accelerators.includes("unknown") && !isKnown;
-      if (!matchesAccel && !matchesUnknown) return false;
-    }
-
-    if (f.hiring.length > 0 && !f.hiring.includes(hiringStatus(c))) return false;
-
-    if (f.days.length > 0) {
-      // Calendar-date diff (UTC, midnight-truncated) to match the SQL cutoff
-      // in getFeed(), which compares (NOW() AT TIME ZONE 'UTC')::date against
-      // date_filed. A raw Date.now() diff includes today's elapsed hours,
-      // which pushes borderline rows (filed exactly N days ago) over the
-      // threshold and drops them even though the server already included them.
-      const today = new Date();
-      const todayUTC = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
-      const filed = new Date(c.date_filed);
-      const filedUTC = Date.UTC(filed.getUTCFullYear(), filed.getUTCMonth(), filed.getUTCDate());
-      const daysAgo = (todayUTC - filedUTC) / (1000 * 60 * 60 * 24);
-      if (daysAgo > Math.max(...f.days)) return false;
-    }
-
-    if (f.amounts.length > 0) {
-      const amt = c.amount_raised;
-      const BUCKET_UPPER: Record<number, number | null> = {
-        0: 1_000_000,
-        1_000_000: 10_000_000,
-        10_000_000: 100_000_000,
-        100_000_000: 500_000_000,
-        500_000_000: null,
-      };
-      const passes = f.amounts.some(lo => {
-        const hi = BUCKET_UPPER[lo];
-        if (lo === 0) return amt === null || amt < 1_000_000;
-        if (hi === null) return amt !== null && amt >= lo;
-        return amt !== null && amt >= lo && amt < hi;
-      });
-      if (!passes) return false;
-    }
-
-    if (f.verticals.length > 0 && !matchesVertical(c.tags, f.verticals)) return false;
-
-    if (f.rounds.length > 0 && !f.rounds.includes(normalizeRoundType(c.round_type))) return false;
-
-    if (f.locations.length > 0 && !f.locations.includes(c.location_tag ?? "unknown")) return false;
-
-    return true;
-  });
-}
-
-function applyHiringFilters(companies: Company[], accelerators: string[], roleTypes: string[], roleLevels: string[], verticals: string[]): Company[] {
-  return companies.filter((c) => {
-    if (accelerators.length > 0) {
-      const accels = c.accelerators ?? [c.accelerator];
-      if (!accels.some(a => accelerators.includes(a))) return false;
-    }
-    if (verticals.length > 0 && !matchesVertical(c.tags, verticals)) return false;
-    if (roleTypes.length > 0) {
-      const hasType = roleTypes.some((r) => {
-        if (r === "eng") return c.eng_count > 0;
-        if (r === "product") return c.product_count > 0;
-        if (r === "gtm") return c.gtm_count > 0;
-        if (r === "other") return c.other_count > 0;
-        return false;
-      });
-      if (!hasType) return false;
-    }
-    if (roleLevels.length > 0) {
-      const hasLevel = roleLevels.some((r) => {
-        if (r === "intern") return c.intern_count > 0;
-        if (r === "new_grad") return c.new_grad_count > 0;
-        if (r === "experienced") return (c.eng_count + c.product_count + c.gtm_count + c.other_count) > 0;
-        return false;
-      });
-      if (!hasLevel) return false;
-    }
-    return true;
-  });
-}
-
-function byDateDesc(a: Company, b: Company) {
-  const ta = a.date_filed ? new Date(a.date_filed).getTime() : 0;
-  const tb = b.date_filed ? new Date(b.date_filed).getTime() : 0;
-  return tb - ta;
-}
-
-function byHiringDate(a: Company, b: Company) {
-  const ta = a.date_filed ? new Date(a.date_filed).getTime() : 0;
-  const tb = b.date_filed ? new Date(b.date_filed).getTime() : 0;
-  if (tb !== ta) return tb - ta;
-  const aPosted = a.date_source === "posted";
-  const bPosted = b.date_source === "posted";
-  return aPosted === bPosted ? 0 : aPosted ? -1 : 1;
-}
 
 function getPageNumbers(page: number, totalPages: number): (number | "...")[] {
   const pages: (number | "...")[] = [];
@@ -229,21 +116,35 @@ export function FeedClient({
     setRaisedPage(1);
   }
 
-
-const visible = applyFilters(companies, filters);
-
-  const recent = visible.sort(byDateDesc);
+  const visible = useMemo(() => applyFilters(companies, filters), [companies, filters]);
+  const recent = useMemo(() => [...visible].sort(byDateDesc), [visible]);
 
   const raisedTotalPages = Math.ceil(recent.length / PAGE_SIZE);
-  const pagedRecent = recent.slice((raisedPage - 1) * PAGE_SIZE, raisedPage * PAGE_SIZE);
+  const pagedRecent = useMemo(
+    () => recent.slice((raisedPage - 1) * PAGE_SIZE, raisedPage * PAGE_SIZE),
+    [raisedPage, recent],
+  );
 
-  const filteredHiring = applyHiringFilters(hiringCompanies, hiringAccelerators, hiringRoleTypes, hiringRoleLevels, hiringVerticals).sort(byHiringDate);
+  const filteredHiring = useMemo(
+    () => applyHiringFilters(
+      hiringCompanies,
+      hiringAccelerators,
+      hiringRoleTypes,
+      hiringRoleLevels,
+      hiringVerticals,
+    ).sort(byHiringDate),
+    [hiringAccelerators, hiringCompanies, hiringRoleLevels, hiringRoleTypes, hiringVerticals],
+  );
   const hiringTotalPages = Math.ceil(filteredHiring.length / PAGE_SIZE);
-  const pagedHiring = filteredHiring.slice((hiringPage - 1) * PAGE_SIZE, hiringPage * PAGE_SIZE);
+  const pagedHiring = useMemo(
+    () => filteredHiring.slice((hiringPage - 1) * PAGE_SIZE, hiringPage * PAGE_SIZE),
+    [filteredHiring, hiringPage],
+  );
 
-  const savedCompanies = companies
-    .filter((c) => isBookmarked(c.id))
-    .sort(byDateDesc);
+  const savedCompanies = useMemo(
+    () => companies.filter((company) => isBookmarked(company.id)).sort(byDateDesc),
+    [companies, isBookmarked],
+  );
 
   return (
     <>
