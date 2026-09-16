@@ -21,7 +21,6 @@ PORTFOLIO_URL = "https://a16z.com/portfolio/"
 HEADERS = DEFAULT_HEADERS
 SLEEP = 1.0
 
-# Stages to exclude — these are exits, not potential employers
 EXCLUDED_STATUSES = {"Exits"}
 EXCLUDED_STAGES = {"IPO", "M&A"}
 

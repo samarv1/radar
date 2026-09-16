@@ -10,7 +10,8 @@ Usage:
 
 import time
 
-from db.connection import apply_schema, get_connection
+from db.connection import get_connection
+from db.migrate import run as apply_migrations
 from scrapers._common import BROWSER_USER_AGENT, post_with_retry
 from scrapers.location import classify_location, parse_yc_all_locations
 
@@ -112,9 +113,6 @@ def upsert_company(conn, row: dict) -> bool:
 
 
 def scrape():
-    print("Applying DB schema...")
-    apply_schema()
-
     hits = fetch_all_companies()
     print(f"Total hits: {len(hits)}")
 
@@ -135,7 +133,7 @@ def scrape():
             hq_city, hq_state, hq_country = parse_yc_all_locations(hit.get("all_locations"))
             location_tag = classify_location(hq_city, hq_state, hq_country)
             if location_tag == "unknown":
-                # YC skews ~85% US — safe source-aware default when no location data is found.
+                # YC's directory is US-heavy, so missing location data defaults to other US.
                 location_tag = "other_usa"
 
             row = {
@@ -166,4 +164,5 @@ def scrape():
 
 
 if __name__ == "__main__":
+    apply_migrations()
     scrape()

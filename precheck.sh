@@ -119,14 +119,14 @@ PYEOF
     ok "Database is reachable"
     STALE_AGE=$(echo "$DB_RESULT" | grep '^STALE:' | cut -d: -f2 || true)
     if [[ -n "$STALE_AGE" ]]; then
-      warn "Newest EDGAR filing is ${STALE_AGE} days old — pipeline may need a run before deploying"
+      warn "Newest EDGAR filing is ${STALE_AGE} days old; pipeline may need a run before deploying"
     fi
   else
     cat /tmp/db_err >&2
     fail "Cannot connect to database"
   fi
 else
-  fail "Skipped — DATABASE_URL not set"
+  fail "Skipped because DATABASE_URL is not set"
 fi
 
 # ─── 5. Python lint (ruff) ────────────────────────────────────────────────────
@@ -145,8 +145,15 @@ fi
 # ─── 6. Next.js build (TypeScript + compilation) ──────────────────────────────
 echo ""
 echo "=============================="
-echo "  NEXT.JS BUILD"
+echo "  TESTS / NEXT.JS BUILD"
 echo "=============================="
+
+cd "$ROOT"
+if uv run pytest -m "not integration" 2>&1; then
+  ok "pytest passed"
+else
+  fail "pytest reported errors"
+fi
 
 cd "$WEB"
 if npm run build --silent 2>&1 | tail -5; then
@@ -158,13 +165,19 @@ fi
 # ─── 7. ESLint ───────────────────────────────────────────────────────────────
 echo ""
 echo "=============================="
-echo "  ESLINT"
+echo "  FRONTEND CHECKS"
 echo "=============================="
 
 if npm run lint --silent 2>&1; then
   ok "ESLint passed"
 else
   fail "ESLint reported errors"
+fi
+
+if npm run test --silent 2>&1; then
+  ok "frontend tests passed"
+else
+  fail "frontend tests reported errors"
 fi
 
 # ─── 8. Summary ──────────────────────────────────────────────────────────────
@@ -180,7 +193,7 @@ if [[ $FAIL -gt 0 ]]; then
   exit 1
 elif [[ $WARN -gt 0 ]]; then
   echo ""
-  echo "  Warnings present — review before deploying."
+  echo "  Warnings present. Review before deploying."
 else
   echo ""
   echo "  All checks passed. Safe to deploy."
