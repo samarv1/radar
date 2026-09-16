@@ -1,17 +1,11 @@
-"""
-Pipeline runner.
-
-Usage:
-    uv run python main.py [--mode daily|weekly]
-
-daily  (default): EDGAR → CIK lookup → cross-reference → careers → Product Hunt (last 2 days)
-weekly           : all of the above + YC + all accelerator directories + 180-day backfill for EDGAR/TechCrunch/Signalbase
-                    + 30-day Product Hunt backfill (PH's rate limit rules out a full 180-day sweep)
-"""
+"""Run a daily, weekly, or single-source pipeline mode."""
 
 import argparse
+from dataclasses import dataclass
+from functools import partial
+from typing import Callable
 
-from db.connection import apply_schema
+from db.migrate import run as apply_migrations
 from scrapers.a16z import scrape as scrape_a16z
 from scrapers.a16z_build import scrape as scrape_a16z_build
 from scrapers.careers import scrape as scrape_careers
@@ -32,135 +26,113 @@ from scrapers.yc import scrape as scrape_yc
 from scrapers.yc_hiring import scrape as scrape_yc_hiring
 
 
-def run_daily():
-    print("=== EDGAR filings (chunked, 60 days) ===")
-    scrape_edgar_chunked(days_back=60, chunk_days=30)
-
-    print("\n=== CIK lookup ===")
-    run_cik_lookup()
-
-    print("\n=== Cross-reference ===")
-    run_cross_reference()
-
-    print("\n=== Careers (EDGAR-matched) ===")
-    scrape_careers(workers=4)
-
-    print("\n=== a16z Build newsletter ===")
-    scrape_a16z_build(days_back=2)
-
-    print("\n=== YC hiring signal ===")
-    scrape_yc_hiring()
-
-    print("\n=== Careers (accelerator companies — overlay refresh + new discovery) ===")
-    # Cap at 500/day so the step stays bounded; backlog drains over a few runs.
-    scrape_careers(hiring_sweep=True, workers=12, limit=500)
-
-    print("\n=== Product Hunt (last 2 days) ===")
-    scrape_ph(days_back=2)
-
-    print("\n=== TechCrunch (last 2 days) ===")
-    scrape_techcrunch(days_back=2)
-
-    print("\n=== Signalbase (last 2 days) ===")
-    scrape_signalbase(days_back=2)
-
-    print("\n=== Standalone validation ===")
-    run_validate_standalone()
-
-    print("\n=== EDGAR enrichment ===")
-    run_enrich_edgar()
+@dataclass(frozen=True)
+class PipelineStep:
+    name: str
+    action: Callable[[], None]
 
 
-def run_weekly():
-    print("=== YC directory ===")
-    scrape_yc()
-
-    print("\n=== a16z directory ===")
-    scrape_a16z()
-
-    print("\n=== Sequoia ===")
-    scrape_sequoia()
-
-    print("\n=== Lightspeed ===")
-    scrape_lightspeed()
-
-    print("\n=== Pear ===")
-    scrape_pear()
-
-    print("\n=== Techstars ===")
-    scrape_techstars()
-
-    print("\n=== EDGAR broad scan (180 days) ===")
-    # Extends the daily 60-day broad scan to catch filings from the full 6-month window.
-    scrape_edgar_chunked(days_back=180, chunk_days=30)
-
-    print("\n=== EDGAR targeted (accelerator cohort, 180 days) ===")
-    # Pulls full 6-month filing history for each known-CIK company directly
-    # from the EDGAR submissions API — bypasses the broad scan's 10k pagination limit.
-    scrape_edgar_targeted(days_back=180)
-
-    print("\n=== HQ location enrichment (non-YC/Techstars, via matched EDGAR filings) ===")
-    run_enrich_location()
-
-    print("\n=== Careers (accelerator companies — overlay refresh, no limit) ===")
-    # Weekly runs the full cohort without a cap: known-ATS companies are cheap (1 request each),
-    # not_found companies re-discover only if >75 days stale.
-    scrape_careers(hiring_sweep=True, workers=12)
-
-    print("\n=== Product Hunt backfill (30 days) ===")
-    # Not 180: PH's own rate limit (6250 pts/window) makes a full 180-day,
-    # votes-ordered sweep infeasible even with the early-break-on-votes fix.
-    scrape_ph(days_back=30)
-
-    print("\n=== TechCrunch full backfill (180 days) ===")
-    scrape_techcrunch(days_back=180)
-
-    print("\n=== Signalbase full backfill (180 days) ===")
-    scrape_signalbase(days_back=180)
+def _step(name: str, action: Callable[[], None]) -> PipelineStep:
+    return PipelineStep(name, action)
 
 
-SCRAPERS = {
-    "yc":        scrape_yc,
-    "a16z":      scrape_a16z,
-    "sequoia":   scrape_sequoia,
-    "lightspeed": scrape_lightspeed,
-    "pear":      scrape_pear,
-    "techstars": scrape_techstars,
-    # Capped like the daily hiring sweep: the full cohort outgrew the 30-min job
-    # timeout, so this drains the backlog across multiple weekly runs instead.
-    "careers-rescrape": lambda: scrape_careers(hiring_sweep=True, workers=12, limit=500),
-    "signalbase": lambda: scrape_signalbase(days_back=180, workers=20),
-    "edgar-broad-backfill": lambda: scrape_edgar_chunked(days_back=180, chunk_days=30),
-    "edgar-targeted-backfill": lambda: scrape_edgar_targeted(days_back=180),
-    "techcrunch-backfill": lambda: scrape_techcrunch(days_back=180),
-    # 30-day safety net, not a full 180-day backfill: PH's rate limit makes that
-    # infeasible, and 180 days of PH signal is stale for this product anyway.
-    "ph-backfill": lambda: scrape_ph(days_back=30),
+DAILY_STEPS = (
+    _step("EDGAR filings (chunked, 60 days)", partial(scrape_edgar_chunked, days_back=60, chunk_days=30)),
+    _step("CIK lookup", run_cik_lookup),
+    _step("Cross-reference", run_cross_reference),
+    _step("Careers (EDGAR-matched)", partial(scrape_careers, workers=4)),
+    _step("a16z Build newsletter", partial(scrape_a16z_build, days_back=2)),
+    _step("YC hiring signal", scrape_yc_hiring),
+    _step(
+        "Careers (accelerator companies - overlay refresh + new discovery)",
+        partial(scrape_careers, hiring_sweep=True, workers=12, limit=500),
+    ),
+    _step("Product Hunt (last 2 days)", partial(scrape_ph, days_back=2)),
+    _step("TechCrunch (last 2 days)", partial(scrape_techcrunch, days_back=2)),
+    _step("Signalbase (last 2 days)", partial(scrape_signalbase, days_back=2)),
+    _step("Standalone validation", run_validate_standalone),
+    _step("EDGAR enrichment", run_enrich_edgar),
+)
+
+WEEKLY_STEPS = (
+    _step("YC directory", scrape_yc),
+    _step("a16z directory", scrape_a16z),
+    _step("Sequoia", scrape_sequoia),
+    _step("Lightspeed", scrape_lightspeed),
+    _step("Pear", scrape_pear),
+    _step("Techstars", scrape_techstars),
+    _step("CIK lookup", run_cik_lookup),
+    _step("EDGAR broad scan (180 days)", partial(scrape_edgar_chunked, days_back=180, chunk_days=30)),
+    _step("EDGAR targeted (accelerator cohort, 180 days)", partial(scrape_edgar_targeted, days_back=180)),
+    _step("Cross-reference", run_cross_reference),
+    _step("HQ location enrichment (non-YC/Techstars, via matched EDGAR filings)", run_enrich_location),
+    _step("Careers (EDGAR-matched)", partial(scrape_careers, workers=4)),
+    _step("a16z Build newsletter", partial(scrape_a16z_build, days_back=2)),
+    _step("YC hiring signal", scrape_yc_hiring),
+    _step(
+        "Careers (accelerator companies - overlay refresh, no limit)",
+        partial(scrape_careers, hiring_sweep=True, workers=12),
+    ),
+    _step("Product Hunt backfill (30 days)", partial(scrape_ph, days_back=30)),
+    _step("TechCrunch full backfill (180 days)", partial(scrape_techcrunch, days_back=180)),
+    _step("Signalbase full backfill (180 days)", partial(scrape_signalbase, days_back=180)),
+    _step("Standalone validation", run_validate_standalone),
+    _step("EDGAR enrichment", run_enrich_edgar),
+)
+
+SINGLE_MODES = {
+    "yc": _step("YC directory", scrape_yc),
+    "a16z": _step("a16z directory", scrape_a16z),
+    "sequoia": _step("Sequoia", scrape_sequoia),
+    "lightspeed": _step("Lightspeed", scrape_lightspeed),
+    "pear": _step("Pear", scrape_pear),
+    "techstars": _step("Techstars", scrape_techstars),
+    "careers-rescrape": _step(
+        "Careers (accelerator companies - capped rescrape)",
+        partial(scrape_careers, hiring_sweep=True, workers=12, limit=500),
+    ),
+    "signalbase": _step("Signalbase full backfill (180 days)", partial(scrape_signalbase, days_back=180, workers=20)),
+    "edgar-broad-backfill": _step(
+        "EDGAR broad scan (180 days)", partial(scrape_edgar_chunked, days_back=180, chunk_days=30)
+    ),
+    "edgar-targeted-backfill": _step(
+        "EDGAR targeted (accelerator cohort, 180 days)", partial(scrape_edgar_targeted, days_back=180)
+    ),
+    "techcrunch-backfill": _step(
+        "TechCrunch full backfill (180 days)", partial(scrape_techcrunch, days_back=180)
+    ),
+    "ph-backfill": _step("Product Hunt backfill (30 days)", partial(scrape_ph, days_back=30)),
 }
+
+
+def get_steps(mode: str) -> tuple[PipelineStep, ...]:
+    if mode == "daily":
+        return DAILY_STEPS
+    if mode == "weekly":
+        return WEEKLY_STEPS
+    return (SINGLE_MODES[mode],)
+
+
+def run_mode(mode: str) -> None:
+    for index, step in enumerate(get_steps(mode)):
+        prefix = "" if index == 0 else "\n"
+        print(f"{prefix}=== {step.name} ===")
+        step.action()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--mode",
-        choices=["daily", "weekly", *SCRAPERS.keys()],
+        choices=["daily", "weekly", *SINGLE_MODES.keys()],
         default="daily",
         help=(
-            "'daily': EDGAR + careers + PH; "
-            "'weekly': all accelerator dirs + full PH backfill + daily; "
+            "'daily': current discovery and enrichment windows; "
+            "'weekly': directory refreshes plus wider source windows; "
             "or a single scraper name to run just that one"
         ),
     )
     args = parser.parse_args()
 
-    # Unconditional, before any mode branch, so every invocation path
-    # always runs against a schema that's up to date.
     print("=== Schema ===")
-    apply_schema()
-
-    if args.mode in SCRAPERS:
-        SCRAPERS[args.mode]()
-    elif args.mode == "weekly":
-        run_weekly()
-        run_daily()
-    else:
-        run_daily()
+    apply_migrations()
+    run_mode(args.mode)

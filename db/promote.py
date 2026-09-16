@@ -5,7 +5,7 @@ the DB writes).
 
 accelerator_companies.id is a SERIAL and local's id for a company has no
 relationship to production's id for the same company, so rows can't just be
-copied as-is — every table that references accelerator_companies.id would
+copied as-is because every table that references accelerator_companies.id would
 end up pointing at the wrong row (or nothing) in production. Instead:
   1. accelerator_companies is promoted first, matched/deduped on source_url,
      producing a {local_id: prod_id} map (covering both newly-inserted and
@@ -13,7 +13,7 @@ end up pointing at the wrong row (or nothing) in production. Instead:
   2. Every child table's FK column is remapped through that map before being
      upserted into production, matched on that table's own unique constraint.
 
-Inserts use ON CONFLICT ... DO NOTHING everywhere — this never overwrites a
+Inserts use ON CONFLICT ... DO NOTHING everywhere. This never overwrites a
 row already in production, so it's always safe to run again.
 
 Usage:
@@ -22,7 +22,7 @@ Usage:
 
 import os
 
-from db.connection import get_connection, apply_schema
+from db.connection import get_connection
 from db.migrate import run as apply_migrations
 
 
@@ -73,7 +73,6 @@ def promote_accelerator_companies(src_conn, tgt_conn):
         cur.execute(f"SELECT id, {col_list} FROM {table}")
         rows = cur.fetchall()
 
-    # +1 for leading id column
     source_url_idx = cols.index("source_url") + 1
     local_id_by_source_url = {row[source_url_idx]: row[0] for row in rows}
 
@@ -121,9 +120,7 @@ def promote_child_table(src_conn, tgt_conn, table, unique_cols, fk_column, id_ma
         for row in rows:
             local_fk = row[fk_idx]
             if local_fk is not None and remap_fk(id_map, local_fk) is None:
-                # Parent company wasn't promoted (shouldn't normally happen
-                # since accelerator_companies is promoted first) — skip
-                # rather than insert a dangling/wrong FK.
+                # Child rows must never be copied without their remapped parent.
                 skipped_no_parent += 1
                 continue
             values = list(row)
@@ -168,7 +165,7 @@ def run():
         raise RuntimeError("PROD_DATABASE_URL not set in environment")
     if SOURCE_URL == TARGET_URL:
         raise RuntimeError(
-            "DATABASE_URL and PROD_DATABASE_URL are identical — refusing to run "
+            "DATABASE_URL and PROD_DATABASE_URL are identical, refusing to run "
             "(check your .env)"
         )
 
@@ -178,7 +175,6 @@ def run():
 
     summary = []
     try:
-        apply_schema(TARGET_URL)
         apply_migrations(TARGET_URL)
 
         id_map, inserted, total = promote_accelerator_companies(src_conn, tgt_conn)

@@ -1,9 +1,8 @@
 """
 Sequoia Capital portfolio scraper.
 
-Paginates the public company listing at sequoiacap.com/our-companies
-using the FacetWP ?fwp_paged=N parameter. Filters to early-stage companies
-partnered in 2018 or later (the Series A–C sweet spot).
+Combines the public WordPress company list with stage and year metadata from
+the portfolio page. Optionally filters companies with known years before 2018.
 
 Writes into accelerator_companies with accelerator='sequoia'.
 
@@ -23,10 +22,6 @@ BASE_URL = "https://www.sequoiacap.com/our-companies/"
 WP_API = "https://sequoiacap.com/wp-json/wp/v2/company"
 HEADERS = DEFAULT_HEADERS
 SLEEP = 0.4
-
-# Stages we care about — exclude large exits and very old investments
-INCLUDED_STAGES = {"pre-seed/seed", "early"}
-
 
 def parse_html_table() -> dict[str, dict]:
     """
@@ -115,7 +110,7 @@ def scrape(min_year: int = 2018, all_stages: bool = False, conn=None):
     wp_companies = fetch_all_companies_wp()
     print(f"  WP API returned {len(wp_companies)} companies")
 
-    # Merge: WP API is the canonical list; HTML table provides stage/year enrichment
+    # The API is canonical; the HTML table only enriches rows with stage and year.
     merged = []
     for hit in wp_companies:
         name = (hit.get("title") or {}).get("rendered", "").strip()
@@ -138,9 +133,7 @@ def scrape(min_year: int = 2018, all_stages: bool = False, conn=None):
 
     print(f"\nTotal merged: {len(merged)}")
 
-    # Filter: include all companies; if year data available, optionally restrict.
-    # Stage filtering is NOT applied here — EDGAR filing date/amount serves as
-    # the real "recently raised" indicator.
+    # EDGAR filing recency is the stage signal, so this only applies the year cutoff.
     filtered = []
     for c in merged:
         if not all_stages and c["year"] and c["year"] < min_year:

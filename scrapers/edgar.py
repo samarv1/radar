@@ -11,14 +11,15 @@ Usage:
 
 import re
 import threading
-import time
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, timedelta, datetime
 
 import requests
 
-from db.connection import apply_schema, get_connection
+from db.connection import get_connection
+from db.migrate import run as apply_migrations
+from scrapers._common import RateLimiter
 
 EFTS_SEARCH = "https://efts.sec.gov/LATEST/search-index"
 EDGAR_ARCHIVES = "https://www.sec.gov/Archives/edgar/data"
@@ -28,10 +29,8 @@ HEADERS = {
     "Accept-Encoding": "gzip, deflate",
 }
 
-# Form D `items` values that indicate pooled investment funds/hedge funds
 FUND_ITEMS = {"06b", "3c", "3c.1", "3c.7"}
 
-# Industry group strings to exclude (from XML) — substring match, case-insensitive
 EXCLUDED_INDUSTRY_GROUPS = {
     "Pooled Investment Fund",
     "Real Estate",
@@ -42,12 +41,8 @@ EXCLUDED_INDUSTRY_GROUPS = {
     "REITS",
 }
 
-SLEEP = 0.15
+SEC_RATE_LIMITER = RateLimiter(requests_per_second=8)
 
-
-# ---------------------------------------------------------------------------
-# 1. Stub fetching with pre-filtering
-# ---------------------------------------------------------------------------
 
 def _is_fund_stub(items: list[str]) -> bool:
     """Return True if any item indicates a pooled investment fund."""
@@ -74,8 +69,8 @@ def search_form_d_stubs(start_date: str, end_date: str, max_stubs: int = 2000, s
             "from": from_offset,
         }
         try:
+            SEC_RATE_LIMITER.wait()
             resp = requests.get(EFTS_SEARCH, params=params, headers=HEADERS, timeout=30)
-            time.sleep(SLEEP)
             if resp.status_code != 200:
                 print(f"  EFTS {resp.status_code} at offset {from_offset}, stopping.")
                 break
@@ -126,10 +121,6 @@ def search_form_d_stubs(start_date: str, end_date: str, max_stubs: int = 2000, s
     return results[:max_stubs]
 
 
-# ---------------------------------------------------------------------------
-# 2. XML fetching
-# ---------------------------------------------------------------------------
-
 def fetch_primary_xml(cik: str, accession_no: str) -> tuple[str | None, str | None]:
     """
     Fetch the primary Form D XML for a filing.
@@ -140,10 +131,10 @@ def fetch_primary_xml(cik: str, accession_no: str) -> tuple[str | None, str | No
     xml_candidates = []
 
     try:
+        SEC_RATE_LIMITER.wait()
         idx_resp = requests.get(
             f"{base}/{accession_path}-index.json", headers=HEADERS, timeout=20
         )
-        time.sleep(SLEEP)
         if idx_resp.status_code == 200:
             for item in idx_resp.json().get("directory", {}).get("item", []):
                 name = item.get("name", "")
@@ -160,8 +151,8 @@ def fetch_primary_xml(cik: str, accession_no: str) -> tuple[str | None, str | No
 
     for url in xml_candidates:
         try:
+            SEC_RATE_LIMITER.wait()
             resp = requests.get(url, headers=HEADERS, timeout=20)
-            time.sleep(SLEEP)
             if resp.status_code == 200 and "<" in resp.text:
                 return resp.text, url
         except Exception:
@@ -169,10 +160,6 @@ def fetch_primary_xml(cik: str, accession_no: str) -> tuple[str | None, str | No
 
     return None, None
 
-
-# ---------------------------------------------------------------------------
-# 3. XML parsing
-# ---------------------------------------------------------------------------
 
 NS_RE = re.compile(r'\s+xmlns[^"]*"[^"]*"|\s+xmlns[^\']*\'[^\']*\'')
 
@@ -224,10 +211,6 @@ def is_excluded_by_xml(parsed: dict) -> bool:
     return any(ex.lower() in ig.lower() for ex in EXCLUDED_INDUSTRY_GROUPS)
 
 
-# ---------------------------------------------------------------------------
-# 4. Shared filing row builder + DB upsert
-# ---------------------------------------------------------------------------
-
 def _build_filing_row(
     parsed: dict,
     entity_name: str,
@@ -277,29 +260,46 @@ def upsert_filing(conn, filing: dict) -> bool:
         return cur.fetchone() is not None
 
 
-# ---------------------------------------------------------------------------
-# 5. Main
-# ---------------------------------------------------------------------------
+def load_known_accessions(conn) -> set[str]:
+    with conn.cursor() as cur:
+        cur.execute("SELECT accession_number FROM edgar_filings")
+        return {row[0] for row in cur.fetchall() if row[0]}
+
+
+def filter_unknown_stubs(stubs: list[dict], seen_accessions: set[str]) -> list[dict]:
+    unknown = []
+    for stub in stubs:
+        accession_no = stub.get("accession_no")
+        if accession_no and accession_no in seen_accessions:
+            continue
+        unknown.append(stub)
+        if accession_no:
+            seen_accessions.add(accession_no)
+    return unknown
+
 
 def scrape(days_back: int = 180, limit: int = 2000, start_offset: int = 0):
-    print("Applying DB schema...")
-    apply_schema()
-
     end_date = date.today()
     start_date = end_date - timedelta(days=days_back)
 
     print(f"Searching EDGAR Form D filings {start_date} → {end_date} (max non-fund stubs: {limit}, start_offset: {start_offset})...")
     stubs = search_form_d_stubs(str(start_date), str(end_date), max_stubs=limit, start_offset=start_offset)
-    print(f"\nCollected {len(stubs)} non-fund stubs. Fetching XMLs...\n")
-
     conn = get_connection()
+    known_accessions = load_known_accessions(conn)
+    unknown_stubs = filter_unknown_stubs(stubs, known_accessions)
+    skipped_known = len(stubs) - len(unknown_stubs)
+    print(
+        f"\nCollected {len(stubs)} non-fund stubs. "
+        f"Skipping {skipped_known} known accessions; fetching {len(unknown_stubs)} XMLs...\n"
+    )
+
     inserted = 0
     skipped_excluded = 0
-    skipped_duplicate = 0
+    skipped_duplicate = skipped_known
     failed = 0
 
     try:
-        for i, stub in enumerate(stubs):
+        for i, stub in enumerate(unknown_stubs):
             accession_no = stub["accession_no"]
             entity_name = stub.get("entity_name", "")
             file_date = stub.get("file_date", "")
@@ -310,7 +310,7 @@ def scrape(days_back: int = 180, limit: int = 2000, start_offset: int = 0):
                 failed += 1
                 continue
 
-            print(f"[{i+1}/{len(stubs)}] {entity_name} ({accession_no})", end="")
+            print(f"[{i+1}/{len(unknown_stubs)}] {entity_name} ({accession_no})", end="")
 
             xml_text, raw_url = fetch_primary_xml(cik, accession_no)
             if not xml_text:
@@ -397,31 +397,42 @@ def scrape_chunked(days_back: int = 180, chunk_days: int = 30, limit_per_chunk: 
     Each window covers `chunk_days` days; windows walk backwards from today.
     ON CONFLICT DO NOTHING makes overlapping edges idempotent.
 
-    XML fetch + upsert per stub is parallelized across `workers` threads (each still
-    respects SLEEP between its own requests, so aggregate throughput stays well under
-    EDGAR's fair-access limits) — the stub search/pagination stays sequential since
-    it's a single cursor-paginated call.
+    XML fetch and upsert work is parallelized across `workers`. A process-wide
+    limiter keeps request starts below EDGAR's fair-access limit.
     """
-    apply_schema()
     end = date.today()
     start_outer = end - timedelta(days=days_back)
 
     total_inserted = total_dupes = total_excluded = total_failed = 0
     window_end = end
+    conn = get_connection()
+    try:
+        seen_accessions = load_known_accessions(conn)
+    finally:
+        conn.close()
 
     while window_end > start_outer:
         window_start = max(window_end - timedelta(days=chunk_days), start_outer)
         print(f"\n--- Window {window_start} → {window_end} ---")
 
         stubs = search_form_d_stubs(str(window_start), str(window_end), max_stubs=limit_per_chunk)
-        print(f"Collected {len(stubs)} non-fund stubs. Fetching XMLs...")
+        unknown_stubs = filter_unknown_stubs(stubs, seen_accessions)
+        known_count = len(stubs) - len(unknown_stubs)
+        print(
+            f"Collected {len(stubs)} non-fund stubs. "
+            f"Skipping {known_count} known accessions; fetching {len(unknown_stubs)} XMLs..."
+        )
 
         open_conns: list = []
         open_conns_lock = threading.Lock()
-        inserted = dupes = excluded = failed = 0
+        inserted = excluded = failed = 0
+        dupes = known_count
         try:
             with ThreadPoolExecutor(max_workers=workers) as executor:
-                futures = [executor.submit(_process_stub, stub, open_conns, open_conns_lock) for stub in stubs]
+                futures = [
+                    executor.submit(_process_stub, stub, open_conns, open_conns_lock)
+                    for stub in unknown_stubs
+                ]
                 for future in as_completed(futures):
                     i, d, e, f = future.result()
                     inserted += i
@@ -454,8 +465,8 @@ def _targeted_one(acc_id: int, name: str, cik: str, cutoff: date, open_conns: li
     url = SUBMISSIONS.format(cik=cik_padded)
 
     try:
+        SEC_RATE_LIMITER.wait()
         resp = requests.get(url, headers=HEADERS, timeout=20)
-        time.sleep(SLEEP)
         if resp.status_code != 200:
             return 0, 0, 1
         data = resp.json()
@@ -519,11 +530,8 @@ def scrape_targeted(days_back: int = 180, workers: int = 4):
     Targeted mode: for each accelerator_company with a known CIK, fetch
     their filing history from data.sec.gov and upsert any Form D filings
     from the last `days_back` days. Much faster than the broad scan and
-    surgically accurate — no fuzzy matching needed.
-
-    Parallelized across `workers` threads — each does its own request + a
-    SLEEP pause, so throughput stays well under SEC's 10 req/s fair-access
-    limit (workers=4 keeps it in the ~7 req/s range).
+    surgically accurate, with no fuzzy matching needed. Requests share the
+    same process-wide EDGAR rate limiter as broad scans.
     """
     cutoff = date.today() - timedelta(days=days_back)
 
@@ -572,6 +580,7 @@ if __name__ == "__main__":
     parser.add_argument("--chunk-days", type=int, default=30, help="Days per window (chunked mode)")
     args = parser.parse_args()
 
+    apply_migrations()
     if args.mode == "targeted":
         scrape_targeted(days_back=args.days)
     elif args.mode == "chunked":

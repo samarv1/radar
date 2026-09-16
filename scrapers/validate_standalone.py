@@ -11,30 +11,14 @@ Usage:
     uv run python -m scrapers.validate_standalone
 """
 
-import re
-
 from rapidfuzz import process, fuzz
 
 from db.connection import get_connection
+from scrapers.company_names import normalize_company_name
 
 MATCH_THRESHOLD = 85
 
-LEGAL_SUFFIXES = re.compile(
-    r"\b(inc|llc|corp|ltd|co|incorporated|limited|company|technologies|technology|"
-    r"solutions|software|labs|lab|studio|studios|ai|io|app|apps|group|ventures|"
-    r"holdings|capital|partners|fund|management)\b",
-    re.IGNORECASE,
-)
-PUNCTUATION = re.compile(r"[^\w\s]")
-WHITESPACE = re.compile(r"\s+")
-
-
-def normalize(name: str) -> str:
-    name = name.lower()
-    name = PUNCTUATION.sub(" ", name)
-    name = LEGAL_SUFFIXES.sub(" ", name)
-    name = WHITESPACE.sub(" ", name).strip()
-    return name
+normalize = normalize_company_name
 
 
 def run():
@@ -134,8 +118,7 @@ def run():
         conn.commit()
         print(f"\nValidated: {tc_count} via TechCrunch, {ph_count} via Product Hunt, {sb_count} via Signalbase")
 
-        # Mark EDGAR "Other Technology" filings directly — no external signal needed.
-        # Excludes zero-dollar raises and SPV series (e.g. "Heat Safety Solutions, LLC Series 8").
+        # Other Technology is sufficient evidence unless the filing is zero-dollar or an SPV series.
         with conn.cursor() as cur:
             cur.execute(r"""
                 UPDATE edgar_filings

@@ -13,7 +13,7 @@ import time
 
 import requests
 
-from db.connection import apply_schema
+from db.migrate import run as apply_migrations
 from scrapers._common import execute_upsert, run_upsert_batch
 from scrapers.location import classify_location
 
@@ -84,9 +84,6 @@ def upsert_company(conn, row: dict) -> bool:
 
 
 def scrape(min_year: int = 2018, all_countries: bool = False, conn=None):
-    print("Applying DB schema...")
-    apply_schema()
-
     filter_parts = ["is_accelerator_company:true"]
     if not all_countries:
         filter_parts.append("country:United States")
@@ -143,4 +140,5 @@ if __name__ == "__main__":
     parser.add_argument("--all-countries", action="store_true")
     args = parser.parse_args()
 
+    apply_migrations()
     scrape(min_year=args.min_year, all_countries=args.all_countries)

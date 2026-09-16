@@ -3,38 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import { ChevronDown, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
-
-export type Filters = {
-  accelerators: string[];
-  hiring: string[];
-  days: number[];
-  amounts: number[];
-  verticals: string[];
-  rounds: string[];
-  locations: string[];
-};
-
-export const DEFAULT_FILTERS: Filters = {
-  accelerators: [],
-  hiring: [],
-  days: [],
-  amounts: [],
-  verticals: [],
-  rounds: [],
-  locations: [],
-};
-
-export function normalizeRoundType(rt: string | null): string {
-  if (!rt) return "unknown";
-  const s = rt.toLowerCase().trim();
-  if (s.includes("pre") || s === "seed") return "seed";
-  if (s.includes("series a")) return "series_a";
-  if (s.includes("series b")) return "series_b";
-  if (s.includes("series c")) return "series_c";
-  if (s.includes("series d")) return "series_d";
-  if (s.includes("series e") || s.includes("series f") || s.includes("series g")) return "series_e";
-  return "unknown";
-}
+import type { Filters } from "@/lib/feed";
 
 const ROUND_OPTIONS: [string, string][] = [
   ["seed", "Seed / Pre-Seed"],
@@ -45,26 +14,6 @@ const ROUND_OPTIONS: [string, string][] = [
   ["series_e", "Series E+"],
   ["unknown", "Unknown"],
 ];
-
-export const VERTICAL_KEYWORDS: Record<string, string[]> = {
-  ai:       ["ai", "artificial intelligence", "machine learning", "generative ai", "llm", "deep learning", "nlp", "computer vision"],
-  fintech:  ["fintech", "payments", "crypto", "blockchain", "banking", "insurtech", "lending", "wealth"],
-  health:   ["health", "biotech", "pharma", "medical", "clinical", "genomics", "drug", "therapy", "mental health"],
-  b2b:      ["saas", "b2b", "enterprise"],
-  devtools: ["developer tools", "developer tool", "infrastructure", "open source", "devops", "security", "observability", "api", "platform engineering"],
-  climate:  ["climate", "cleantech", "sustainability", "energy", "carbon", "renewable"],
-  consumer: ["consumer", "e-commerce", "marketplace", "gaming", "social", "entertainment", "media", "retail"],
-  edtech:   ["education", "edtech", "upskilling"],
-  hardware: ["hardware", "robotics", "iot", "internet of things", "manufacturing", "semiconductors", "aerospace"],
-};
-
-export function tagMatchesKeyword(tag: string, kw: string): boolean {
-  const t = tag.toLowerCase();
-  const escaped = kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  // Left-boundary match: kw must start at beginning of tag or after a non-word char.
-  // This catches "Healthcare" → "health" (prefix) while blocking "Biomedical" → "media" (infix).
-  return new RegExp(`(?:^|\\W)${escaped}`).test(t);
-}
 
 const VERTICAL_OPTIONS: [string, string][] = [
   ["ai", "AI / ML"],

@@ -4,7 +4,7 @@ and persisting scrape results (job listings + careers_ats/url status).
 """
 
 from scrapers.careers.ats_fetchers import REAL_ATS
-from scrapers.careers.categorize import categorize
+from scrapers.careers.categorize import categorize, classify
 
 _KNOWN_ATS_LIST = "','".join(REAL_ATS)
 VALID_ACCELERATORS = frozenset({"yc", "a16z", "sequoia", "lightspeed", "pear", "techstars"})
@@ -17,8 +17,7 @@ def get_pending_companies(
     hiring_sweep: bool = False,
     accelerator: str | None = None,
 ) -> list[dict]:
-    # Three-tier staleness: known ATS refreshes cheaply and often; not_found staggers long;
-    # NULL is always picked up (discovered once on first encounter).
+    # Known boards refresh often, while failed discovery uses a longer cooldown.
     staleness_parts = ["a.careers_scraped_at IS NULL"]
     if refresh_after_days is not None:
         staleness_parts.append(
@@ -37,13 +36,7 @@ def get_pending_companies(
     accel_filter = f"AND a.accelerator = '{accelerator}'" if accelerator else ""
 
     if hiring_sweep:
-        # Sweep accelerator companies regardless of EDGAR status.
-        # Exclude companies with known large raises (>$100M EDGAR filing).
-        # Per-accelerator strategy:
-        #   YC/Techstars  — all (no batch filter; $100M check handles large exits)
-        #   a16z          — exclude stage containing 'Growth' or 'EXIT'
-        #   Sequoia       — only Pre-Seed/Seed or Early stage
-        #   Pear/Lightspeed — include all
+        # The hiring feed excludes known large raises and late-stage cohorts.
         sql = f"""
             SELECT DISTINCT a.id, a.name, a.website, a.careers_ats, a.careers_url
             FROM accelerator_companies a
@@ -67,10 +60,7 @@ def get_pending_companies(
             ORDER BY a.id
         """
     else:
-        # Cover all accelerator companies that could appear in the raised feed:
-        # those with any EDGAR filing ≤ $100M OR recent funding news (last 180 days).
-        # This replaces the old JOIN on edgar_filings so accelerator-announced
-        # companies (no Form D yet) are also scraped.
+        # Include both EDGAR-backed and recently announced accelerator companies.
         sql = f"""
             SELECT DISTINCT a.id, a.name, a.website, a.careers_ats, a.careers_url
             FROM accelerator_companies a
@@ -99,52 +89,53 @@ def get_pending_companies(
         ]
 
 
-def clear_jobs(conn, company_id: int):
-    with conn.cursor() as cur:
-        cur.execute("DELETE FROM job_listings WHERE company_id = %s", (company_id,))
-
-
 def sync_jobs(conn, company_id: int, ats: str, jobs: list[dict]):
-    """Diff-based upsert: insert new jobs (preserving first_seen_at), delete removed ones."""
+    """Replace the current board snapshot while preserving first_seen_at."""
     fresh_ids = {j["job_id"] for j in jobs}
 
     with conn.cursor() as cur:
-        cur.execute(
-            "SELECT job_id FROM job_listings WHERE company_id = %s AND ats = %s",
-            (company_id, ats),
-        )
-        existing_ids = {row[0] for row in cur.fetchall()}
-
-        removed = existing_ids - fresh_ids
-        if removed:
-            cur.execute(
-                "DELETE FROM job_listings WHERE company_id = %s AND ats = %s AND job_id = ANY(%s)",
-                (company_id, ats, list(removed)),
-            )
-
-        # Insert new jobs (first_seen_at = NOW() marks when we first noticed them)
-        new_jobs = [j for j in jobs if j["job_id"] not in existing_ids]
-        if new_jobs:
+        if jobs:
             insert_sql = """
                 INSERT INTO job_listings
                     (company_id, ats, job_id, title, department, location, category,
-                     job_url, posted_at, first_seen_at)
+                     role_type, role_level, job_url, posted_at, first_seen_at, scraped_at)
                 VALUES
-                    (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
-                ON CONFLICT (company_id, ats, job_id) DO NOTHING
+                    (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+                ON CONFLICT (company_id, ats, job_id) DO UPDATE SET
+                    title = EXCLUDED.title,
+                    department = EXCLUDED.department,
+                    location = EXCLUDED.location,
+                    category = EXCLUDED.category,
+                    role_type = EXCLUDED.role_type,
+                    role_level = EXCLUDED.role_level,
+                    job_url = EXCLUDED.job_url,
+                    posted_at = EXCLUDED.posted_at,
+                    scraped_at = NOW()
             """
-            for j in new_jobs:
-                cat = categorize(j["title"])
-                cur.execute(insert_sql, (
-                    company_id, ats, j["job_id"], j["title"],
-                    j["department"], j["location"], cat, j["job_url"],
-                    j.get("posted_at"),
+            rows = []
+            for job in jobs:
+                classification = classify(job["title"])
+                rows.append((
+                    company_id, ats, job["job_id"], job["title"],
+                    job["department"], job["location"], categorize(job["title"]),
+                    classification.role_type, classification.role_level, job["job_url"],
+                    job.get("posted_at"),
                 ))
+            cur.executemany(insert_sql, rows)
 
         if fresh_ids:
             cur.execute(
-                "UPDATE job_listings SET scraped_at = NOW() WHERE company_id = %s AND ats = %s",
-                (company_id, ats),
+                """
+                DELETE FROM job_listings
+                WHERE company_id = %s
+                  AND (ats <> %s OR NOT (job_id = ANY(%s)))
+                """,
+                (company_id, ats, list(fresh_ids)),
+            )
+        else:
+            cur.execute(
+                "DELETE FROM job_listings WHERE company_id = %s",
+                (company_id,),
             )
 
 

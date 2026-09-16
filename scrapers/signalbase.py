@@ -19,9 +19,10 @@ from urllib.parse import urlparse, urlunparse
 from xml.etree import ElementTree as ET
 
 import requests
-from rapidfuzz import fuzz, process
 
 from db.connection import get_connection
+from db.migrate import run as apply_migrations
+from scrapers.company_names import find_exact_company_match, normalize_company_identity
 
 SITEMAP_BASE = "https://www.trysignalbase.com/sitemap/{}"
 SITEMAP_COUNT = 7
@@ -53,22 +54,7 @@ ROUND_RE = re.compile(
     re.IGNORECASE,
 )
 
-LEGAL_SUFFIXES = re.compile(
-    r"\b(inc|llc|corp|ltd|co|incorporated|limited|company|technologies|technology|"
-    r"solutions|software|labs|lab|studio|studios|ai|io|app|apps|group|ventures|"
-    r"holdings|capital|partners|fund|management)\b",
-    re.IGNORECASE,
-)
-PUNCTUATION = re.compile(r"[^\w\s]")
-WHITESPACE = re.compile(r"\s+")
-
-
-def normalize(name: str) -> str:
-    name = name.lower()
-    name = PUNCTUATION.sub(" ", name)
-    name = LEGAL_SUFFIXES.sub(" ", name)
-    name = WHITESPACE.sub(" ", name).strip()
-    return name
+normalize = normalize_company_identity
 
 
 def parse_amount(text: str) -> float | None:
@@ -105,7 +91,6 @@ def parse_company_from_title(title: str) -> str | None:
     if len(parts) < 2:
         return None
     name = parts[0].strip().strip("'\"").strip()
-    # Drop trailing parentheticals like "(YC W24)"
     name = re.sub(r"\s*\([^)]*\)\s*$", "", name).strip()
     if not name or len(name) > 80:
         return None
@@ -191,7 +176,6 @@ _SKIP_DOMAINS = re.compile(
     re.IGNORECASE,
 )
 
-# Signalbase embeds company website as a UTM-tagged link: href="https://company.com/?utm_source=trysignalbase..."
 _UTM_LINK_RE = re.compile(
     r'href="(https?://[^"]+utm_source=trysignalbase[^"]*)"',
     re.IGNORECASE,
@@ -222,7 +206,6 @@ def parse_company_website(html: str) -> str | None:
 
 def parse_page(html: str, url: str) -> dict | None:
     """Extract funding data from a Signalbase page via JSON-LD and meta tags."""
-    # JSON-LD is the cleanest source — prefer it
     ld_data = {}
     for m in re.finditer(r'<script type="application/ld\+json">(.*?)</script>', html, re.DOTALL):
         try:
@@ -233,7 +216,6 @@ def parse_page(html: str, url: str) -> dict | None:
         except (json.JSONDecodeError, AttributeError):
             continue
 
-    # og:title: "Company Name Raises $X | Signalbase" or just "Company Name Raises $X"
     og_title_m = re.search(r'<meta property="og:title" content="([^"]+)"', html)
     og_title = html_lib.unescape(og_title_m.group(1)) if og_title_m else ""
     og_title = re.sub(r"\s*\|\s*Signalbase\s*$", "", og_title, flags=re.IGNORECASE).strip()
@@ -254,7 +236,6 @@ def parse_page(html: str, url: str) -> dict | None:
     except ValueError:
         return None
 
-    # Title is most reliable source for company name and amount
     title = og_title or ld_data.get("headline", "")
     if not title:
         return None
@@ -266,7 +247,7 @@ def parse_page(html: str, url: str) -> dict | None:
         return None
 
     amount = parse_amount(title)
-    # Exclude micro-grants/noise (< $50K) and growth-stage raises (> $100M per spec)
+    # The product targets venture rounds from $50K through $100M.
     if amount is not None and (amount < 50_000 or amount > 100_000_000):
         return None
 
@@ -298,14 +279,8 @@ def load_accelerator_index(conn):
 
 
 def find_match(company_name: str, ids, names_norm) -> int | None:
-    norm = normalize(company_name)
-    if not norm:
-        return None
-    result = process.extractOne(norm, names_norm, scorer=fuzz.token_sort_ratio, score_cutoff=90)
-    if result:
-        _, _, idx = result
-        return ids[idx]
-    return None
+    index = find_exact_company_match(company_name, names_norm)
+    return ids[index] if index is not None else None
 
 
 def upsert(conn, row: dict) -> bool:
@@ -340,12 +315,6 @@ def _fetch_and_parse(url: str) -> dict | None:
     return parse_page(html, url)
 
 
-def _ensure_schema(conn):
-    with conn.cursor() as cur:
-        cur.execute("ALTER TABLE funding_news ADD COLUMN IF NOT EXISTS industry VARCHAR(150)")
-    conn.commit()
-
-
 def scrape(days_back: int = 2, workers: int = DEFAULT_WORKERS):
     print(f"Fetching Signalbase funding URLs (last {days_back} days)...")
     urls = fetch_sitemap_urls(days_back)
@@ -357,7 +326,6 @@ def scrape(days_back: int = 2, workers: int = DEFAULT_WORKERS):
 
     conn = get_connection()
     try:
-        _ensure_schema(conn)
         ids, names_norm = load_accelerator_index(conn)
         inserted = updated = skipped = matched = 0
         done = 0
@@ -405,4 +373,5 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--days", type=int, default=7)
     args = parser.parse_args()
+    apply_migrations()
     scrape(days_back=args.days)

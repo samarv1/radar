@@ -1,46 +1,32 @@
 """
-Cross-reference EDGAR filings with YC companies using fuzzy matching.
+Cross-reference EDGAR filings with accelerator companies using fuzzy matching.
 
-Normalizes company names, runs batch fuzzy matching via rapidfuzz,
-and stores matches above the threshold in the `matches` table.
+Normalizes company names, runs batch fuzzy matching, and attaches confident
+matches directly to the filing.
 
 Usage:
     uv run python -m scrapers.cross_reference
 """
 
-import re
-
 from rapidfuzz import process, fuzz
 
 from db.connection import get_connection
+from scrapers.company_names import normalize_company_name
 
 MATCH_THRESHOLD = 85
 AMBIGUOUS_ZONE_MAX = 92  # scores 85-92 flagged for manual review
 
 
-LEGAL_SUFFIXES = re.compile(
-    r"\b(inc|llc|corp|ltd|co|incorporated|limited|company|technologies|technology|"
-    r"solutions|software|labs|lab|studio|studios|ai|io|app|apps|group|ventures|"
-    r"holdings|capital|partners|fund|management)\b",
-    re.IGNORECASE,
-)
-
-PUNCTUATION = re.compile(r"[^\w\s]")
-WHITESPACE = re.compile(r"\s+")
+normalize = normalize_company_name
 
 
-def normalize(name: str) -> str:
-    name = name.lower()
-    name = PUNCTUATION.sub(" ", name)
-    name = LEGAL_SUFFIXES.sub(" ", name)
-    name = WHITESPACE.sub(" ", name).strip()
-    return name
-
-
-def load_edgar_companies(conn) -> list[tuple[int, str, str]]:
+def load_edgar_companies(conn, reprocess_all: bool = False) -> list[tuple[int, str, str]]:
     """Returns list of (id, original_name, normalized_name)."""
     with conn.cursor() as cur:
-        cur.execute("SELECT id, company_name FROM edgar_filings")
+        query = "SELECT id, company_name FROM edgar_filings"
+        if not reprocess_all:
+            query += " WHERE accelerator_id IS NULL"
+        cur.execute(query)
         rows = cur.fetchall()
     return [(row[0], row[1], normalize(row[1])) for row in rows]
 
@@ -59,13 +45,13 @@ def upsert_match(conn, edgar_id: int, accelerator_id: int, score: float):
         cur.execute(sql, (accelerator_id, edgar_id))
 
 
-def run():
+def run(reprocess_all: bool = False):
     conn = get_connection()
     try:
-        edgar = load_edgar_companies(conn)
+        edgar = load_edgar_companies(conn, reprocess_all=reprocess_all)
         yc = load_yc_companies(conn)
 
-        print(f"Loaded {len(edgar)} EDGAR filings, {len(yc)} YC companies.")
+        print(f"Loaded {len(edgar)} EDGAR filings, {len(yc)} accelerator companies.")
 
         if not edgar or not yc:
             print("Nothing to match — run the scrapers first.")
@@ -118,4 +104,13 @@ def run():
 
 
 if __name__ == "__main__":
-    run()
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--reprocess-all",
+        action="store_true",
+        help="Re-evaluate filings that already have an accelerator match",
+    )
+    args = parser.parse_args()
+    run(reprocess_all=args.reprocess_all)

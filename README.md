@@ -112,11 +112,24 @@ npm run dev   # reads DATABASE_URL from ../.env
 **Database:** set up a fresh Postgres DB with:
 
 ```bash
-uv run python -c "from db.connection import apply_schema; apply_schema()"
 uv run python -m db.migrate
 ```
 
-`db/schema.sql` covers the original tables; everything since is in `db/migrate.py`, which runs all migrations in order and is safe to re-run against a partially-migrated DB.
+`db/migrate.py` is the schema entrypoint. It creates the baseline from `db/schema.sql`, then applies every idempotent migration in order. It is safe to re-run against a partially migrated database.
+
+## Tests
+
+```bash
+uv run ruff check .
+uv run pytest
+
+cd web
+npm run lint
+npm run test
+npm run typecheck
+```
+
+Database integration tests run when `TEST_DATABASE_URL` points to a disposable Postgres database. CI provides one automatically.
 
 ## Promoting local data to production
 

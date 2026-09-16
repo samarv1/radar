@@ -2,21 +2,21 @@ CREATE TABLE IF NOT EXISTS accelerator_companies (
     id SERIAL PRIMARY KEY,
     name TEXT NOT NULL,
     website TEXT,
-    accelerator TEXT NOT NULL,       -- 'yc', 'pear', 'sequoia', 'a16z'
-    batch TEXT,                      -- YC batch (e.g. 'W24') or first-partnered year for others
+    accelerator TEXT NOT NULL,
+    batch TEXT,
     description TEXT,
-    stage TEXT,                      -- 'Pre-Seed/Seed', 'Early', 'Growth', 'IPO', 'Acquired'
+    stage TEXT,
     tags TEXT[],
-    source_url TEXT UNIQUE NOT NULL, -- canonical URL on the accelerator's site
-    edgar_cik TEXT,                  -- NULL until CIK lookup runs
-    cik_confidence TEXT,             -- 'exact', 'fuzzy', or NULL
-    jobs_url TEXT,                   -- careers page if known (Pear provides this)
+    source_url TEXT UNIQUE NOT NULL,
+    edgar_cik TEXT,
+    cik_confidence TEXT,
+    jobs_url TEXT,
     is_excluded BOOLEAN NOT NULL DEFAULT FALSE,
     yc_is_hiring BOOLEAN NOT NULL DEFAULT FALSE,
     hq_city TEXT,
     hq_state TEXT,
     hq_country TEXT,
-    location_tag TEXT,                -- 'bay_area', 'new_york', 'other_usa', 'international', 'unknown'
+    location_tag TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -33,11 +33,11 @@ CREATE TABLE IF NOT EXISTS edgar_filings (
     accession_number TEXT UNIQUE NOT NULL,
     raw_url TEXT,
     accelerator_id INT REFERENCES accelerator_companies(id),
-    standalone_source TEXT,              -- 'techcrunch' or 'producthunt' for non-accelerator validated startups
-    investor_count INT,                  -- totalNumberAlreadyInvested from Form D XML
-    vc_firm_signal TEXT,                 -- VC firm name if found in director/promoter relationship clarifications
-    offering_name TEXT,                  -- nameOfOffering from Form D XML (e.g. "Series A Preferred Stock")
-    city TEXT,                           -- issuerAddress city from Form D XML
+    standalone_source TEXT,
+    investor_count INT,
+    vc_firm_signal TEXT,
+    offering_name TEXT,
+    city TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -69,7 +69,7 @@ CREATE TABLE IF NOT EXISTS funding_news (
     id SERIAL PRIMARY KEY,
     company_name TEXT NOT NULL,
     amount_usd NUMERIC,
-    round_type TEXT,                 -- 'Seed', 'Series A', etc.
+    round_type TEXT,
     article_title TEXT NOT NULL,
     article_url TEXT UNIQUE NOT NULL,
     published_at TIMESTAMPTZ,
@@ -82,14 +82,3 @@ CREATE TABLE IF NOT EXISTS funding_news (
 
 CREATE INDEX IF NOT EXISTS idx_funding_news_accelerator ON funding_news(accelerator_id)
     WHERE accelerator_id IS NOT NULL;
-
--- Idempotent column additions for columns added after initial table creation.
--- apply_schema() runs this file on every pipeline start, so these ADD COLUMN
--- IF NOT EXISTS statements backfill any columns the live DB is missing.
-ALTER TABLE edgar_filings ADD COLUMN IF NOT EXISTS offering_name TEXT;
-ALTER TABLE funding_news ADD COLUMN IF NOT EXISTS industry TEXT;
-ALTER TABLE edgar_filings ADD COLUMN IF NOT EXISTS city TEXT;
-ALTER TABLE accelerator_companies ADD COLUMN IF NOT EXISTS hq_city TEXT;
-ALTER TABLE accelerator_companies ADD COLUMN IF NOT EXISTS hq_state TEXT;
-ALTER TABLE accelerator_companies ADD COLUMN IF NOT EXISTS hq_country TEXT;
-ALTER TABLE accelerator_companies ADD COLUMN IF NOT EXISTS location_tag TEXT;

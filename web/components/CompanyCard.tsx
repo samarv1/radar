@@ -2,11 +2,8 @@
 
 import { Flame, Bookmark } from "lucide-react";
 import { Card, CardHeader } from "@/components/ui/card";
-import { VERTICAL_KEYWORDS, tagMatchesKeyword } from "@/components/FilterBar";
 import type { Company } from "@/lib/db";
-
-const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
-
+import { dateSourceLabel, formatAmount, formatDate, getVerticals, isRecent, totalRoles } from "@/lib/feed";
 
 const VERTICAL_LABELS: Record<string, string> = {
   ai: "AI / ML",
@@ -19,20 +16,6 @@ const VERTICAL_LABELS: Record<string, string> = {
   edtech: "EdTech",
   hardware: "Hardware",
 };
-
-function getVerticals(tags: string[] | null): string[] {
-  if (!tags || tags.length === 0) return [];
-  return Object.entries(VERTICAL_KEYWORDS)
-    .filter(([, keywords]) =>
-      keywords.some((kw) => tags.some((t) => tagMatchesKeyword(t, kw)))
-    )
-    .map(([key]) => key)
-    .slice(0, 3);
-}
-
-function isRecent(date_filed: string): boolean {
-  return Date.now() - new Date(date_filed).getTime() < THIRTY_DAYS_MS;
-}
 
 const SOURCE_LABELS: Record<string, string> = {
   yc: "YC",
@@ -50,27 +33,7 @@ const LOCATION_LABELS: Record<string, string> = {
   international: "International",
 };
 
-function formatAmount(n: number | null): string | null {
-  if (n === null || n < 10_000) return null;
-  if (n >= 1_000_000_000) return `$${(n / 1_000_000_000).toFixed(1).replace(/\.0$/, "")}B`;
-  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(0)}M`;
-  if (n >= 1_000) return `$${(n / 1_000).toFixed(0)}K`;
-  return null;
-}
-
-function formatDate(s: string | null, dateSource?: string): string {
-  if (!s) return "—";
-  // EDGAR filing dates are plain calendar dates (no time-of-day), so they must be
-  // read back in UTC to avoid shifting a day when the viewer isn't in UTC. Other
-  // sources are real timestamps, so the browser's local timezone is correct.
-  const opts: Intl.DateTimeFormatOptions = { month: "short", day: "numeric" };
-  if (dateSource === "raised") opts.timeZone = "UTC";
-  return new Date(s).toLocaleDateString("en-US", opts);
-}
-
 function OpenRoles({ company, hiringMode }: { company: Company; hiringMode: boolean }) {
-  // In hiring mode, always show ATS-based status (role counts + apply link).
-  // Outside hiring mode, companies with no funding data use a simplified "apply ↗" link.
   if (!hiringMode && company.amount_raised === null && company.careers_url) {
     return (
       <div className="flex items-baseline gap-1.5 text-xs text-muted-foreground pt-1">
@@ -82,19 +45,14 @@ function OpenRoles({ company, hiringMode }: { company: Company; hiringMode: bool
     );
   }
 
-  const hasData = company.careers_ats && company.careers_ats !== "not_found";
-  const total = company.eng_count + company.gtm_count + company.product_count + company.other_count;
-
   let status: React.ReactNode;
-  if (!hasData) {
-    // not_found means our scraper didn't detect a supported ATS board.
-    // If we still have a careers URL (e.g. Rippling, Teamtailor, custom page), link to it.
+  if (!company.role_counts_authoritative) {
     status = company.careers_url ? (
       <a href={company.careers_url} target="_blank" rel="noopener noreferrer" className="relative z-10 hover:opacity-70 transition-opacity font-medium text-green-600">
         apply ↗
       </a>
     ) : <span className="text-muted-foreground/50">—</span>;
-  } else if (total === 0) {
+  } else if (totalRoles(company) === 0) {
     status = <span className="text-muted-foreground/50">none</span>;
   } else {
     status = company.careers_url ? (
@@ -150,8 +108,7 @@ export function CompanyCard({
                 </a>
               ) : company.name}
             </p>
-            {/* min-h 84px = worst-case row stack (accel 20 + verticals 24 + location 20 +
-                open roles 20), so card height stays constant regardless of which rows render. */}
+            {/* Reserve the tallest row stack so cards stay aligned when metadata is absent. */}
             <div className="min-h-[84px]">
               {showAccelRow && (
                 <div className="flex items-center gap-1.5 flex-wrap">
@@ -193,15 +150,7 @@ export function CompanyCard({
             <p className="text-xs text-muted-foreground mt-0.5 flex items-center justify-end gap-1">
               {fresh && (company.has_edgar || company.date_source === "announced" || company.date_source === "posted" || company.date_source === "discovered") && <Flame className="relative z-10 shrink-0 text-orange-400" size={13} />}
               <span>
-                {hiringMode
-                  ? (company.date_source === "posted" ? "posted " : "discovered ")
-                  : company.has_edgar
-                    ? "raised "
-                    : company.date_source === "announced" || (amount !== null && !company.has_edgar)
-                      ? "announced "
-                      : company.date_source === "posted"
-                        ? "posted "
-                        : "discovered "}
+                {dateSourceLabel(company, hiringMode, amount !== null)}{" "}
                 {formatDate(company.date_filed, company.date_source)}
               </span>
             </p>

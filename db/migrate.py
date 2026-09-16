@@ -1,18 +1,11 @@
-"""
-Runs all migrations (v2-v16) against the database in order.
+"""Create the baseline schema and apply every idempotent migration in order."""
 
-All migrations use `IF NOT EXISTS`-style DDL (or, for v12, a data-fix `UPDATE`
-that's a no-op on an empty table), so this is safe to run start-to-finish
-against a brand-new database, or to re-run against one that's already
-partially migrated.
-
-Usage:
-    uv run python -c "from db.connection import apply_schema; apply_schema()"
-    uv run python -m db.migrate
-"""
-
+from pathlib import Path
 
 from db.connection import get_connection
+
+
+BASE_SCHEMA = Path(__file__).with_name("schema.sql")
 
 
 STEPS = [
@@ -164,10 +157,6 @@ STEPS = [
         """,
     ),
     (
-        "v14: edgar_filings.offering_name (idempotent re-add, no-op if v10 already ran)",
-        "ALTER TABLE edgar_filings ADD COLUMN IF NOT EXISTS offering_name TEXT",
-    ),
-    (
         "v15: funding_news.industry",
         "ALTER TABLE funding_news ADD COLUMN IF NOT EXISTS industry TEXT",
     ),
@@ -181,6 +170,110 @@ STEPS = [
         ALTER TABLE accelerator_companies ADD COLUMN IF NOT EXISTS location_tag TEXT;
         """,
     ),
+    (
+        "v17: scraper completion state",
+        """
+        ALTER TABLE accelerator_companies
+            ADD COLUMN IF NOT EXISTS cik_checked_at TIMESTAMPTZ;
+        ALTER TABLE edgar_filings
+            ADD COLUMN IF NOT EXISTS enriched_at TIMESTAMPTZ;
+        """,
+    ),
+    (
+        "v18: independent job type and level",
+        r"""
+        ALTER TABLE job_listings
+            ADD COLUMN IF NOT EXISTS role_type TEXT,
+            ADD COLUMN IF NOT EXISTS role_level TEXT;
+
+        UPDATE job_listings
+        SET role_type = CASE
+                WHEN title ~* '\y(engineer|engineering|developer|software|backend|front.?end|full.?stack|data|ml|machine learning|artificial intelligence|infrastructure|devops|sre|site reliability|platform|security|qa|quality|hardware|embedded|firmware|scientist|cloud|mobile|ios|android|systems)\y'
+                    THEN 'engineering'
+                WHEN title ~* '\y(product manager|product lead|pm|product designer|ux|ui|user experience|user research|designer|design|researcher|research)\y'
+                    THEN 'product'
+                WHEN title ~* '\y(sales|account executive|ae|sdr|bdr|business development|marketing|growth|revenue|customer success|customer support|partnerships|solutions engineer|solutions consultant|demand generation|go.?to.?market|gtm|brand|content|communications|public relations|social media|community)\y'
+                    THEN 'gtm'
+                ELSE 'other'
+            END,
+            role_level = CASE
+                WHEN title ~* '\y(intern|internship|co-?op|apprentice|apprenticeship)\y'
+                    THEN 'intern'
+                WHEN title ~* '\y(new.?grad|new graduate|recent grad|recent graduate|entry.?level|university grad|campus hire|junior|associate engineer|associate software|associate developer|associate data|associate product)\y'
+                    THEN 'new_grad'
+                ELSE 'experienced'
+            END
+        WHERE role_type IS NULL OR role_level IS NULL;
+
+        ALTER TABLE job_listings
+            ALTER COLUMN role_type SET DEFAULT 'other',
+            ALTER COLUMN role_type SET NOT NULL,
+            ALTER COLUMN role_level SET DEFAULT 'experienced',
+            ALTER COLUMN role_level SET NOT NULL;
+        """,
+    ),
+    (
+        "v19: reconcile columns from the legacy baseline",
+        """
+        ALTER TABLE accelerator_companies
+            ADD COLUMN IF NOT EXISTS is_excluded BOOLEAN NOT NULL DEFAULT FALSE;
+        ALTER TABLE edgar_filings
+            ADD COLUMN IF NOT EXISTS standalone_source TEXT,
+            ADD COLUMN IF NOT EXISTS investor_count INT,
+            ADD COLUMN IF NOT EXISTS vc_firm_signal TEXT;
+        ALTER TABLE funding_news
+            ADD COLUMN IF NOT EXISTS website TEXT;
+        """,
+    ),
+    (
+        "v20: remove confirmed false source links and valuation amounts",
+        """
+        UPDATE funding_news fn
+        SET accelerator_id = NULL
+        FROM accelerator_companies a
+        WHERE a.id = fn.accelerator_id
+          AND (fn.company_name, a.name) IN (
+              ('Lion Energy Limited', 'Helion Energy'),
+              ('Finly', 'Findly'),
+              ('Coverwatch', 'Overwatch'),
+              ('STRAAND', 'Strand AI'),
+              ('Clove', 'Clover'),
+              ('Penguin Solutions', 'Penguin AI'),
+              ('Petra Labs', 'Pietra'),
+              ('Capital Factory', 'Factory'),
+              ('Gateway Capital Partners', 'Gateway'),
+              ('Benchmark', 'Benchmark Labs'),
+              ('AI Brief', 'Brief'),
+              ('Ascent', 'Scent Lab'),
+              ('Edgify', 'Edify'),
+              ('Jedify', 'Edify'),
+              ('Staked', 'Stacked'),
+              ('Strala', 'Trala')
+          );
+
+        UPDATE accelerator_companies
+        SET website = NULL, updated_at = NOW()
+        WHERE (name, website) IN (
+            ('Brief', 'https://dailyaibrief.com/'),
+            ('Edify', 'https://jedify.com/'),
+            ('Scent Lab', 'https://ascentfunding.com/'),
+            ('Stacked', 'https://staked.us/'),
+            ('Trala', 'https://strala.ai/')
+        );
+
+        UPDATE funding_news
+        SET amount_usd = NULL
+        WHERE source = 'techcrunch'
+          AND company_name IN (
+              'Nico',
+              'Snabbit',
+              'Upscale AI',
+              'Elon Musk’s Boring Company',
+              'Nuclear startup Valar Atomics in talks to'
+          )
+          AND article_title ~* 'valuation';
+        """,
+    ),
 ]
 
 
@@ -188,11 +281,34 @@ def run(url: str | None = None):
     conn = get_connection(url)
     try:
         with conn.cursor() as cur:
+            cur.execute("SELECT pg_advisory_xact_lock(hashtext('radar_schema_migrations'))")
+            print("Applying baseline schema...")
+            cur.execute(BASE_SCHEMA.read_text())
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS radar_schema_migrations (
+                    version INT PRIMARY KEY,
+                    label TEXT NOT NULL,
+                    applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """
+            )
+            cur.execute("SELECT version FROM radar_schema_migrations")
+            applied = {row[0] for row in cur.fetchall()}
+            applied_now = 0
             for label, ddl in STEPS:
+                version = int(label.split(":", 1)[0].removeprefix("v"))
+                if version in applied:
+                    continue
                 print(f"Applying {label}...")
                 cur.execute(ddl)
+                cur.execute(
+                    "INSERT INTO radar_schema_migrations (version, label) VALUES (%s, %s)",
+                    (version, label),
+                )
+                applied_now += 1
         conn.commit()
-        print(f"All {len(STEPS)} migrations complete.")
+        print(f"Schema current. Applied {applied_now} migration(s).")
     finally:
         conn.close()
 

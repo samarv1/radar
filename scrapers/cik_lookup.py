@@ -7,13 +7,12 @@ search API by company name. Stores the CIK and confidence level.
 Confidence levels:
   exact  - normalized name match score >= 95
   fuzzy  - score 80–94 (flag for manual review)
-  (NULL) - no match found; company likely hasn't filed Form D yet
+  not_found - a completed search found no confident match
 
 Usage:
     uv run python -m scrapers.cik_lookup [--limit 200] [--refetch-fuzzy]
 """
 
-import re
 import time
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -22,6 +21,7 @@ import requests
 from rapidfuzz import fuzz
 
 from db.connection import get_connection
+from scrapers.company_names import normalize_company_name
 
 EFTS = "https://efts.sec.gov/LATEST/search-index"
 HEADERS = {
@@ -32,40 +32,23 @@ SLEEP = 0.2
 EXACT_THRESHOLD = 95
 FUZZY_THRESHOLD = 80
 
-LEGAL_SUFFIXES = re.compile(
-    r"\b(inc|llc|corp|ltd|co|incorporated|limited|company|technologies|technology|"
-    r"solutions|software|labs|lab|studio|studios|ai|io|app|apps|group|ventures|"
-    r"holdings|capital|partners|fund|management|pbc)\b",
-    re.IGNORECASE,
-)
-TICKER = re.compile(r"\s*\([A-Z][A-Z0-9\s,]*\)")  # strips "(ABNB)", "(RGTI, RGTIW)", etc.
-PUNCTUATION = re.compile(r"[^\w\s]")
-WHITESPACE = re.compile(r"\s+")
+normalize = normalize_company_name
 
 
-def normalize(name: str) -> str:
-    name = TICKER.sub("", name)
-    name = name.lower()
-    name = PUNCTUATION.sub(" ", name)
-    name = LEGAL_SUFFIXES.sub(" ", name)
-    name = WHITESPACE.sub(" ", name).strip()
-    return name
-
-
-def search_edgar(company_name: str) -> list[dict]:
+def search_edgar(company_name: str) -> list[dict] | None:
     """
     Search EDGAR EFTS for Form D filings matching the company name.
-    Returns list of {cik, entity_name, file_date}.
+    Returns a list of candidates, or None when the request fails.
     """
     params = {"q": f'"{company_name}"', "forms": "D"}
     try:
         resp = requests.get(EFTS, params=params, headers=HEADERS, timeout=20)
         time.sleep(SLEEP)
         if resp.status_code != 200:
-            return []
+            return None
         hits = resp.json().get("hits", {}).get("hits", [])
     except Exception:
-        return []
+        return None
 
     results = []
     for hit in hits:
@@ -106,10 +89,12 @@ def best_match(company_name: str, candidates: list[dict]) -> tuple[str | None, s
     return best_cik, best_name, best_score
 
 
-def store_cik(conn, company_id: int, cik: str, confidence: str):
+def store_cik_attempt(conn, company_id: int, cik: str | None, confidence: str):
     with conn.cursor() as cur:
         cur.execute(
-            "UPDATE accelerator_companies SET edgar_cik = %s, cik_confidence = %s, updated_at = NOW() WHERE id = %s",
+            "UPDATE accelerator_companies "
+            "SET edgar_cik = %s, cik_confidence = %s, cik_checked_at = NOW(), updated_at = NOW() "
+            "WHERE id = %s",
             (cik, confidence, company_id),
         )
 
@@ -123,7 +108,16 @@ def _lookup_one(args):
     company_id, name, total, idx = args
     try:
         candidates = search_edgar(name)
+        if candidates is None:
+            raise RuntimeError("EDGAR search failed")
+
         if not candidates:
+            conn = get_connection()
+            try:
+                store_cik_attempt(conn, company_id, None, "not_found")
+                conn.commit()
+            finally:
+                conn.close()
             with _counter_lock:
                 _counters["not_found"] += 1
             with _print_lock:
@@ -137,6 +131,12 @@ def _lookup_one(args):
         elif score >= FUZZY_THRESHOLD:
             confidence = "fuzzy"
         else:
+            conn = get_connection()
+            try:
+                store_cik_attempt(conn, company_id, None, "not_found")
+                conn.commit()
+            finally:
+                conn.close()
             with _counter_lock:
                 _counters["not_found"] += 1
             with _print_lock:
@@ -145,7 +145,7 @@ def _lookup_one(args):
 
         conn = get_connection()
         try:
-            store_cik(conn, company_id, cik, confidence)
+            store_cik_attempt(conn, company_id, cik, confidence)
             conn.commit()
         finally:
             conn.close()
@@ -164,6 +164,8 @@ def _lookup_one(args):
 
 
 def run(limit: int = 500, refetch_fuzzy: bool = False, workers: int = 5):
+    for key in _counters:
+        _counters[key] = 0
     conn = get_connection()
     try:
         with conn.cursor() as cur:
@@ -180,12 +182,16 @@ def run(limit: int = 500, refetch_fuzzy: bool = False, workers: int = 5):
             """
             if refetch_fuzzy:
                 cur.execute(
-                    f"SELECT id, name FROM accelerator_companies WHERE edgar_cik IS NULL OR cik_confidence = 'fuzzy' {order} LIMIT %s",
+                    f"SELECT id, name FROM accelerator_companies "
+                    f"WHERE (edgar_cik IS NULL AND (cik_checked_at IS NULL OR cik_checked_at < NOW() - INTERVAL '30 days')) "
+                    f"OR cik_confidence = 'fuzzy' {order} LIMIT %s",
                     (limit,),
                 )
             else:
                 cur.execute(
-                    f"SELECT id, name FROM accelerator_companies WHERE edgar_cik IS NULL {order} LIMIT %s",
+                    f"SELECT id, name FROM accelerator_companies WHERE edgar_cik IS NULL "
+                    f"AND (cik_checked_at IS NULL OR cik_checked_at < NOW() - INTERVAL '30 days') "
+                    f"{order} LIMIT %s",
                     (limit,),
                 )
             companies = cur.fetchall()
