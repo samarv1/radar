@@ -1,21 +1,22 @@
 """
 Enrich edgar_filings with VC signal data parsed from Form D XML.
 
-For each filing with raw_url but no investor_count yet, fetches the XML and extracts:
+For each filing with raw_url that has not completed enrichment, fetches the XML and extracts:
   - investor_count: totalNumberAlreadyInvested (few = institutional, many = crowdfunding)
   - vc_firm_signal: VC firm name found in director/promoter relationshipClarification text
 
 Usage:
     uv run python -m scrapers.enrich_edgar [--all]
 
-By default only processes un-enriched rows (investor_count IS NULL).
+By default only processes rows with no enriched_at timestamp.
 Pass --all to re-process everything (useful after expanding VC_FIRMS list).
 """
 
+import argparse
 import re
 import time
 import xml.etree.ElementTree as ET
-import argparse
+from dataclasses import dataclass
 
 import requests
 
@@ -29,7 +30,6 @@ SLEEP = 0.15
 
 NS_RE = re.compile(r'\s+xmlns[^"]*"[^"]*"|\s+xmlns[^\']*\'[^\']*\'')
 
-# Known tech VC firm names — substring matched against relationshipClarification text
 VC_FIRMS = [
     "sequoia", "andreessen", "a16z", "benchmark", "kleiner perkins",
     "greylock", "accel", "lightspeed", "general catalyst", "nea",
@@ -46,6 +46,14 @@ VC_FIRMS = [
 ]
 
 
+@dataclass(frozen=True)
+class EnrichmentResult:
+    parsed: bool
+    investor_count: int | None = None
+    vc_firm_signal: str | None = None
+    offering_name: str | None = None
+
+
 def fetch_xml(url: str) -> str | None:
     try:
         resp = requests.get(url, headers=HEADERS, timeout=20)
@@ -56,12 +64,11 @@ def fetch_xml(url: str) -> str | None:
         return None
 
 
-def parse_enrichment(xml_text: str) -> tuple[int | None, str | None, str | None]:
-    """Returns (investor_count, vc_firm_signal, offering_name)."""
+def parse_enrichment(xml_text: str) -> EnrichmentResult:
     try:
         root = ET.fromstring(NS_RE.sub("", xml_text))
     except ET.ParseError:
-        return None, None, None
+        return EnrichmentResult(parsed=False)
 
     def find_text(*tags):
         for tag in tags:
@@ -102,10 +109,14 @@ def parse_enrichment(xml_text: str) -> tuple[int | None, str | None, str | None]
         if vc_firm_signal:
             break
 
-    # Offering name — often contains round designation e.g. "Series A Preferred Stock"
     offering_name = find_text("nameOfOffering", "offeringName", "securityType")
 
-    return investor_count, vc_firm_signal, offering_name
+    return EnrichmentResult(
+        parsed=True,
+        investor_count=investor_count,
+        vc_firm_signal=vc_firm_signal,
+        offering_name=offering_name,
+    )
 
 
 def run(reprocess_all: bool = False):
@@ -119,7 +130,7 @@ def run(reprocess_all: bool = False):
             else:
                 cur.execute(
                     "SELECT id, company_name, raw_url FROM edgar_filings "
-                    "WHERE raw_url IS NOT NULL AND investor_count IS NULL"
+                    "WHERE raw_url IS NOT NULL AND enriched_at IS NULL"
                 )
             rows = cur.fetchall()
 
@@ -131,21 +142,30 @@ def run(reprocess_all: bool = False):
             time.sleep(SLEEP)
 
             if not xml_text:
-                print(f"  SKIP  {company_name[:40]} — fetch failed")
+                print(f"  SKIP  {company_name[:40]}: fetch failed")
                 continue
 
-            investor_count, vc_firm_signal, offering_name = parse_enrichment(xml_text)
+            result = parse_enrichment(xml_text)
+            if not result.parsed:
+                print(f"  SKIP  {company_name[:40]}: malformed XML")
+                continue
 
             with conn.cursor() as cur:
                 cur.execute(
-                    "UPDATE edgar_filings SET investor_count = %s, vc_firm_signal = %s, offering_name = %s WHERE id = %s",
-                    (investor_count, vc_firm_signal, offering_name, edgar_id),
+                    "UPDATE edgar_filings SET investor_count = %s, vc_firm_signal = %s, "
+                    "offering_name = %s, enriched_at = NOW() WHERE id = %s",
+                    (
+                        result.investor_count,
+                        result.vc_firm_signal,
+                        result.offering_name,
+                        edgar_id,
+                    ),
                 )
             updated += 1
 
-            vc_tag = f" ← VC: {vc_firm_signal}" if vc_firm_signal else ""
-            inv_str = str(investor_count) if investor_count is not None else "?"
-            off_tag = f" | {offering_name[:30]}" if offering_name else ""
+            vc_tag = f" ← VC: {result.vc_firm_signal}" if result.vc_firm_signal else ""
+            inv_str = str(result.investor_count) if result.investor_count is not None else "?"
+            off_tag = f" | {result.offering_name[:30]}" if result.offering_name else ""
             print(f"  OK    {company_name[:40]:<40}  investors={inv_str}{vc_tag}{off_tag}")
 
             if updated % 50 == 0:

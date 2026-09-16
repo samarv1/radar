@@ -13,7 +13,6 @@ Usage:
 """
 
 import os
-import re
 import sys
 import time
 from datetime import datetime, timedelta, timezone
@@ -21,9 +20,8 @@ from urllib.parse import urlparse
 
 import requests
 from dotenv import load_dotenv
-from rapidfuzz import fuzz, process
-
 from db.connection import get_connection
+from scrapers.company_names import find_company_match, normalize_company_name
 
 load_dotenv()
 
@@ -59,22 +57,7 @@ query($after: String, $postedAfter: DateTime) {
 }
 """
 
-LEGAL_SUFFIXES = re.compile(
-    r"\b(inc|llc|corp|ltd|co|incorporated|limited|company|technologies|technology|"
-    r"solutions|software|labs|lab|studio|studios|ai|io|app|apps|group|ventures|"
-    r"holdings|capital|partners|fund|management)\b",
-    re.IGNORECASE,
-)
-PUNCTUATION = re.compile(r"[^\w\s]")
-WHITESPACE = re.compile(r"\s+")
-
-
-def normalize(name: str) -> str:
-    name = name.lower()
-    name = PUNCTUATION.sub(" ", name)
-    name = LEGAL_SUFFIXES.sub(" ", name)
-    name = WHITESPACE.sub(" ", name).strip()
-    return name
+normalize = normalize_company_name
 
 
 def normalize_url(url: str) -> str:
@@ -89,7 +72,7 @@ def normalize_url(url: str) -> str:
         return url.lower().strip("/")
 
 
-def fetch_launches(token: str, days_back: int) -> list[dict]:
+def fetch_launches(token: str, days_back: int, min_votes: int = MIN_VOTES) -> list[dict]:
     cutoff = datetime.now(timezone.utc) - timedelta(days=days_back)
     posted_after = cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
@@ -125,11 +108,8 @@ def fetch_launches(token: str, days_back: int) -> list[dict]:
         for edge in edges:
             node = edge.get("node", {})
             votes = node.get("votesCount", 0)
-            if votes < MIN_VOTES:
-                # Results are ordered by VOTES descending, so once we hit one
-                # below the threshold every remaining post (this page and all
-                # later pages) is too — stop paginating instead of scanning
-                # the entire date window.
+            if votes < min_votes:
+                # Vote ordering makes every later result ineligible too.
                 below_threshold = True
                 break
 
@@ -137,7 +117,6 @@ def fetch_launches(token: str, days_back: int) -> list[dict]:
             maker = makers[0] if makers else {}
 
             raw_website = node.get("website", "") or ""
-            # PH wraps external links in redirect URLs — discard them
             website = None if "producthunt.com" in raw_website else raw_website or None
 
             launches.append({
@@ -152,7 +131,7 @@ def fetch_launches(token: str, days_back: int) -> list[dict]:
                 "maker_twitter": maker.get("twitterUsername", ""),
             })
 
-        print(f"  Page {page}: fetched {len(edges)} posts, kept {len(launches)} total (>={MIN_VOTES} votes)")
+        print(f"  Page {page}: fetched {len(edges)} posts, kept {len(launches)} total (>={min_votes} votes)")
 
         if below_threshold or not page_info.get("hasNextPage"):
             break
@@ -175,14 +154,8 @@ def load_accelerator_index(conn) -> tuple[list, list, list]:
 def find_accelerator_match(launch: dict, ids, websites, names) -> int | None:
     """Match by product name against company name at a high threshold.
     Website matching is unreliable — PH wraps external links in redirect URLs."""
-    norm_name = normalize(launch["product_name"])
-    if not norm_name:
-        return None
-    result = process.extractOne(norm_name, names, scorer=fuzz.token_sort_ratio, score_cutoff=97)
-    if result:
-        _, _, idx = result
-        return ids[idx]
-    return None
+    result = find_company_match(launch["product_name"], names, threshold=97)
+    return ids[result[0]] if result else None
 
 
 def upsert_launch(conn, launch: dict) -> bool:
@@ -213,7 +186,7 @@ def scrape(days_back: int = DAYS_BACK, min_votes: int = MIN_VOTES):
         sys.exit(1)
 
     print(f"Fetching PH launches from last {days_back} days (min votes: {min_votes})...")
-    launches = fetch_launches(token, days_back)
+    launches = fetch_launches(token, days_back, min_votes=min_votes)
     print(f"\nFetched {len(launches)} launches. Cross-referencing with accelerator DB...")
 
     conn = get_connection()

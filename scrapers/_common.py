@@ -5,6 +5,7 @@ accelerator_companies, report counts" shape they all repeat.
 """
 
 import time
+import threading
 
 import requests
 
@@ -12,13 +13,30 @@ from db.connection import get_connection
 
 DEFAULT_HEADERS = {"User-Agent": "radar-tool contact@example.com"}
 
-# Browser UA for endpoints (e.g. YC's Algolia index) that intermittently 403
-# non-browser User-Agents. Same string already used in scrapers/a16z_build.py.
+# Some directory endpoints intermittently reject non-browser user agents.
 BROWSER_USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/125.0.0.0 Safari/537.36"
 )
+
+
+class RateLimiter:
+    """Serialize request starts that share one provider rate limit."""
+
+    def __init__(self, requests_per_second: float):
+        self._interval = 1 / requests_per_second
+        self._lock = threading.Lock()
+        self._next_request = 0.0
+
+    def wait(self) -> None:
+        with self._lock:
+            now = time.monotonic()
+            delay = self._next_request - now
+            if delay > 0:
+                time.sleep(delay)
+                now = time.monotonic()
+            self._next_request = now + self._interval
 
 
 def post_with_retry(url: str, payload: dict, headers: dict, retries: int = 3, timeout: int = 30):

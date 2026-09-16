@@ -17,9 +17,9 @@ from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
 
 import requests
-from rapidfuzz import fuzz, process
 
 from db.connection import get_connection
+from scrapers.company_names import find_exact_company_match, normalize_company_identity
 
 WP_API = "https://techcrunch.com/wp-json/wp/v2/posts"
 VENTURE_CATEGORY = 577030455
@@ -32,6 +32,14 @@ FUNDING_KEYWORDS = re.compile(
 )
 
 AMOUNT_RE = re.compile(r"\$(\d+(?:\.\d+)?)\s*(million|billion|[MB])\b", re.IGNORECASE)
+VALUATION_BEFORE_RE = re.compile(
+    r"\b(?:valued\s+at|valuation(?:\s+of)?|worth)\s*$",
+    re.IGNORECASE,
+)
+VALUATION_AFTER_RE = re.compile(
+    r"^\s*(?:(?:pre|post)-money\s+)?valuation\b",
+    re.IGNORECASE,
+)
 ROUND_RE = re.compile(r"\b(pre-?seed|seed|series [a-e])\b", re.IGNORECASE)
 
 COMPANY_STOPWORDS = re.compile(
@@ -47,16 +55,6 @@ SLUG_SPLIT_RE = re.compile(
     r"-(?:raises?|closes?|secures?|lands?|gets?|wins?|reportedly|has-raised|will-raise|announces?)-",
     re.IGNORECASE,
 )
-
-LEGAL_SUFFIXES = re.compile(
-    r"\b(inc|llc|corp|ltd|co|incorporated|limited|company|technologies|technology|"
-    r"solutions|software|labs|lab|studio|studios|ai|io|app|apps|group|ventures|"
-    r"holdings|capital|partners|fund|management)\b",
-    re.IGNORECASE,
-)
-PUNCTUATION = re.compile(r"[^\w\s]")
-WHITESPACE = re.compile(r"\s+")
-
 
 _SKIP_DOMAINS = re.compile(
     r"(bloomberg\.com|wsj\.com|reuters\.com|forbes\.com|nytimes\.com|"
@@ -75,9 +73,7 @@ class _FirstExternalLink(HTMLParser):
         super().__init__()
         self.result: str | None = None
         self.website: str | None = None
-        # Fallback: only the very first external link, and only when it's a bare homepage.
-        # "First" means no prior external link was seen — guards against picking up
-        # community/social links (e.g. reddit.com) that appear mid-article.
+        # Only the first bare homepage is safe as a fallback; later links are often media.
         self.homepage_fallback: str | None = None
         self._first_external_seen: bool = False
         self._href: str | None = None
@@ -119,39 +115,39 @@ class _FirstExternalLink(HTMLParser):
             self._text = []
 
 
-def parse_company_from_content(content_html: str) -> str | None:
-    """Extract company name from first external hyperlink in article body."""
+def parse_company_link(content_html: str) -> tuple[str | None, str | None]:
+    """Extract the company name and website in one pass through the article body."""
     parser = _FirstExternalLink()
     parser.feed(html.unescape(content_html[:3000]))
-    return parser.result
+    return parser.result, parser.website or parser.homepage_fallback
+
+
+def parse_company_from_content(content_html: str) -> str | None:
+    return parse_company_link(content_html)[0]
 
 
 def parse_website_from_content(content_html: str) -> str | None:
-    """Extract company website URL from first external hyperlink in article body."""
-    parser = _FirstExternalLink()
-    parser.feed(html.unescape(content_html[:3000]))
-    return parser.website or parser.homepage_fallback
+    return parse_company_link(content_html)[1]
 
 
-def normalize(name: str) -> str:
-    name = name.lower()
-    name = PUNCTUATION.sub(" ", name)
-    name = LEGAL_SUFFIXES.sub(" ", name)
-    name = WHITESPACE.sub(" ", name).strip()
-    return name
+normalize = normalize_company_identity
 
 
 def parse_amount(title: str) -> float | None:
-    m = AMOUNT_RE.search(title)
-    if not m:
-        return None
-    value = float(m.group(1))
-    unit = m.group(2).upper()
-    if unit in ("BILLION", "B"):
-        value *= 1_000_000_000
-    else:
-        value *= 1_000_000
-    return value
+    for match in AMOUNT_RE.finditer(title):
+        before = title[max(0, match.start() - 40):match.start()]
+        after = title[match.end():match.end() + 40]
+        if VALUATION_BEFORE_RE.search(before) or VALUATION_AFTER_RE.search(after):
+            continue
+
+        value = float(match.group(1))
+        unit = match.group(2).upper()
+        if unit in ("BILLION", "B"):
+            value *= 1_000_000_000
+        else:
+            value *= 1_000_000
+        return value
+    return None
 
 
 def strip_tags(html_str: str) -> str:
@@ -172,7 +168,7 @@ def parse_round(title: str, body_text: str | None = None) -> str | None:
 
 
 def parse_company_from_slug(url: str) -> str | None:
-    """Extract company name from TC URL slug — more reliable than title parsing.
+    """Extract company name from a TC URL slug when title parsing fails.
     e.g. https://techcrunch.com/2026/04/02/gateway-capital-announces-first-close-25m/
     → slug: gateway-capital-announces-first-close-25m
     → split on -announces- → gateway-capital → Gateway Capital
@@ -185,7 +181,6 @@ def parse_company_from_slug(url: str) -> str | None:
     if len(parts) < 2:
         return None
     name_slug = parts[0].strip("-")
-    # Title-case hyphenated slug: "nectar-social" → "Nectar Social"
     name = " ".join(w.capitalize() for w in name_slug.split("-"))
     name = re.sub(r"\s*\([^)]*\)\s*$", "", name).strip()
     if not name or len(name) > 60:
@@ -200,18 +195,13 @@ def parse_company(title: str) -> str | None:
     if len(parts) < 2:
         return None
     name = parts[0].strip().strip("'\"").strip()
-    # Strip leading dollar amounts: "$2.5B Cerebras raises..." → "Cerebras"
     name = re.sub(r"^\$[\d.,]+\s*[BMKbmk]?\s+", "", name).strip()
-    # Strip descriptor prefixes in two passes:
-    # Pass 1 — comma/colon split: "Riding GLP-1 boom, VITL" → "VITL"
-    #   "After pivoting, Y Combinator grad Glimpse" → "Y Combinator grad Glimpse"
+    # Descriptor prefixes end at the last comma or colon.
     if "," in name:
         name = name.rsplit(",", 1)[-1].strip()
     elif ":" in name:
         name = name.rsplit(":", 1)[-1].strip()
-    # Pass 2 — last capitalized-word run (handles remaining descriptor prefix):
-    #   "Y Combinator grad Glimpse" → "Glimpse"
-    #   "Marketing operating system Nectar Social" → "Nectar Social"
+    # A final capitalized run handles descriptors without punctuation.
     words = name.split()
     if len(words) > 1:
         last_cap_start = 0
@@ -222,7 +212,6 @@ def parse_company(title: str) -> str | None:
             candidate = " ".join(words[last_cap_start:])
             if len(candidate.split()) <= 3:
                 name = candidate
-    # Drop trailing parentheticals like "(YC W24)"
     name = re.sub(r"\s*\([^)]*\)\s*$", "", name).strip()
     if not name or len(name) > 60:
         return None
@@ -273,14 +262,8 @@ def load_accelerator_index(conn):
 
 
 def find_match(company_name: str, ids, names_norm) -> int | None:
-    norm = normalize(company_name)
-    if not norm:
-        return None
-    result = process.extractOne(norm, names_norm, scorer=fuzz.token_sort_ratio, score_cutoff=90)
-    if result:
-        _, _, idx = result
-        return ids[idx]
-    return None
+    index = find_exact_company_match(company_name, names_norm)
+    return ids[index] if index is not None else None
 
 
 def upsert(conn, row: dict) -> bool:
@@ -319,11 +302,10 @@ def scrape(days_back: int = 90):
         for p in funding_posts:
             title = html.unescape(p["title"]["rendered"])
             content_html = p.get("content", {}).get("rendered", "")
-            # Content link is most reliable (TC hyperlinks company name in first paragraph).
-            # Fall back to title parsing when content link is absent or too long.
-            website = parse_website_from_content(content_html)
+            # The first linked company name is more reliable than headline parsing.
+            linked_company, website = parse_company_link(content_html)
             company = (
-                parse_company_from_content(content_html)
+                linked_company
                 or parse_company(title)
                 or parse_company_from_slug(p.get("link", ""))
             )
@@ -367,33 +349,36 @@ def scrape(days_back: int = 90):
 
 
 def backfill_tc_websites():
-    """Propagate TC-sourced website URLs to accelerator_companies.website.
-
-    For each accelerator company matched to a funding_news row, takes the most
-    recent TC article's website and overwrites accelerator_companies.website.
-    Logs every update for auditability.
-    """
+    """Fill missing accelerator websites from exact TechCrunch company matches."""
     conn = get_connection()
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                UPDATE accelerator_companies a
-                SET website = fn.website,
-                    updated_at = NOW()
-                FROM (
-                    SELECT DISTINCT ON (accelerator_id)
-                        accelerator_id, website, company_name
-                    FROM funding_news
-                    WHERE accelerator_id IS NOT NULL
-                      AND website IS NOT NULL
-                    ORDER BY accelerator_id, published_at DESC
-                ) fn
-                WHERE a.id = fn.accelerator_id
+                SELECT DISTINCT ON (fn.accelerator_id)
+                    a.id, a.name, fn.website, fn.company_name
+                FROM funding_news fn
+                JOIN accelerator_companies a ON a.id = fn.accelerator_id
+                WHERE fn.source = 'techcrunch'
+                  AND fn.website IS NOT NULL
                   AND a.website IS NULL
-                  AND a.website IS DISTINCT FROM fn.website
-                RETURNING a.name, fn.website, fn.company_name
+                ORDER BY fn.accelerator_id, fn.published_at DESC
             """)
-            rows = cur.fetchall()
+            candidates = cur.fetchall()
+            rows = []
+            for accelerator_id, accelerator_name, website, tc_name in candidates:
+                if normalize(accelerator_name) != normalize(tc_name):
+                    continue
+                cur.execute(
+                    """
+                    UPDATE accelerator_companies
+                    SET website = %s, updated_at = NOW()
+                    WHERE id = %s AND website IS NULL
+                    RETURNING name
+                    """,
+                    (website, accelerator_id),
+                )
+                if cur.fetchone():
+                    rows.append((accelerator_name, website, tc_name))
         conn.commit()
         if rows:
             print(f"\nPropagated {len(rows)} TC website(s) to accelerator_companies:")
@@ -441,7 +426,7 @@ def backfill_missing_websites():
             if not data:
                 continue
             content_html = (data[0] if isinstance(data, list) else data).get("content", {}).get("rendered", "")
-            website = parse_website_from_content(content_html)
+            _, website = parse_company_link(content_html)
             if website:
                 conn = get_connection()
                 try:
@@ -501,8 +486,7 @@ def backfill_round_types():
                 post = data[0] if isinstance(data, list) else data
                 content_html = post.get("content", {}).get("rendered", "")
                 body_text = strip_tags(content_html[:1500])
-                # Only accept body-sourced round when it appears near a dollar amount.
-                # Title-sourced round is always trusted (already checked upstream).
+                # Body round labels are accepted only when adjacent to a dollar amount.
                 round_type = parse_round(html.unescape(title))
                 if not round_type:
                     rm = ROUND_RE.search(body_text)
