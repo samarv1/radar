@@ -1,0 +1,7 @@
+.env*
+**/.env*
+.claude
+CLAUDE.md
+.pytest_cache
+.ruff_cache
+**/*.tsbuildinfo

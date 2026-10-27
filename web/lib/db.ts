@@ -1,6 +1,23 @@
 import { Pool } from "pg";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { checkServerIdentity } from "node:tls";
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 5 });
+const connectionString = process.env.DATABASE_URL;
+const railway = connectionString && new URL(connectionString).hostname.endsWith(".proxy.rlwy.net");
+if (railway && [...new URL(connectionString).searchParams.keys()].some((key) => key.startsWith("ssl"))) {
+  throw new Error("Railway TLS settings must be configured in the database client");
+}
+const pool = new Pool({
+  connectionString,
+  max: 5,
+  ssl: railway ? {
+    ca: readFileSync(join(process.cwd(), "certs/railway-root.crt"), "utf8"),
+    rejectUnauthorized: true,
+    // Railway's database certificate names localhost and uses a service-specific CA.
+    checkServerIdentity: (_hostname, cert) => checkServerIdentity("localhost", cert),
+  } : undefined,
+});
 
 const ACCEL_META_CTE = `
   accel_meta AS (
