@@ -61,8 +61,10 @@ def scrape():
 
         with conn.cursor() as cur:
             for c in companies:
-                name = c.get("name", "").strip()
-                website = c.get("website", "").strip()
+                name = (c.get("name") or "").strip() or None
+                website = (c.get("website") or "").strip() or None
+                if name is None and website is None:
+                    continue
 
                 cur.execute(
                     """

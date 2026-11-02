@@ -1,5 +1,7 @@
 import os
 import re
+from pathlib import Path
+from urllib.parse import urlsplit
 import psycopg2
 from dotenv import load_dotenv
 
@@ -23,4 +25,11 @@ def get_connection(url: str | None = None):
     if not url:
         raise RuntimeError("DATABASE_URL not set in environment")
     _log_target(url)
+    if (urlsplit(url).hostname or "").endswith(".proxy.rlwy.net"):
+        # Railway's service-specific CA authenticates its localhost-named certificate.
+        return psycopg2.connect(
+            url,
+            sslmode="verify-ca",
+            sslrootcert=str(Path(__file__).resolve().parents[1] / "web/certs/railway-root.crt"),
+        )
     return psycopg2.connect(url)

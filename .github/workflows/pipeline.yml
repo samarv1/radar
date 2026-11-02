@@ -24,6 +24,9 @@ on:
         type: choice
         options: [daily, weekly, yc, a16z, sequoia, lightspeed, pear, techstars, careers-rescrape, signalbase, edgar-broad-backfill, edgar-targeted-backfill, techcrunch-backfill, ph-backfill]
 
+permissions:
+  contents: read
+
 jobs:
   pipeline:
     runs-on: ubuntu-latest
@@ -35,7 +38,7 @@ jobs:
       - uses: astral-sh/setup-uv@v3
 
       - name: Install dependencies
-        run: uv sync
+        run: uv sync --frozen
 
       - name: Determine mode
         id: mode
