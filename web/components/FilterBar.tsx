@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { ChevronDown, Check } from "lucide-react";
+import { ChevronDown, Check, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { Filters } from "@/lib/feed";
 
@@ -145,14 +145,45 @@ function FilterDropdown({
   );
 }
 
-type Props = {
+type SearchProps = {
+  query: string;
+  onQueryChange: (query: string) => void;
+};
+
+function CompanySearch({ query, onQueryChange }: SearchProps) {
+  const input = useRef<HTMLInputElement>(null);
+  return (
+    <div className="flex h-7 w-full sm:w-60 items-center gap-2 rounded-md border border-input bg-background px-2 focus-within:ring-2 focus-within:ring-ring">
+      <Search size={14} aria-hidden="true" className="shrink-0 text-muted-foreground" />
+      <input
+        ref={input}
+        aria-label="Search by company name"
+        placeholder="Search by company name"
+        value={query}
+        onChange={(event) => onQueryChange(event.target.value)}
+        className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+      />
+      {query && (
+        <button type="button" aria-label="Clear search" className="p-1" onClick={() => {
+          onQueryChange("");
+          input.current?.focus();
+        }}>
+          <X size={14} aria-hidden="true" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+type Props = SearchProps & {
   filters: Filters;
   onChange: (f: Filters) => void;
 };
 
-export function FilterBar({ filters, onChange }: Props) {
+export function FilterBar({ filters, onChange, query, onQueryChange }: Props) {
   return (
     <div className="flex flex-wrap gap-2 mb-8">
+      <CompanySearch query={query} onQueryChange={onQueryChange} />
       <FilterDropdown label="Accelerator" activeCount={filters.accelerators.length}>
         <CheckboxList
           values={filters.accelerators}
@@ -223,6 +254,8 @@ export function FilterBar({ filters, onChange }: Props) {
 }
 
 export function HiringFilterBar({
+  query,
+  onQueryChange,
   accelerators,
   roleTypes,
   roleLevels,
@@ -231,7 +264,7 @@ export function HiringFilterBar({
   onRoleTypes,
   onRoleLevels,
   onVerticals,
-}: {
+}: SearchProps & {
   accelerators: string[];
   roleTypes: string[];
   roleLevels: string[];
@@ -243,6 +276,7 @@ export function HiringFilterBar({
 }) {
   return (
     <div className="flex flex-wrap gap-2 mb-8">
+      <CompanySearch query={query} onQueryChange={onQueryChange} />
       <FilterDropdown label="Accelerator" activeCount={accelerators.length}>
         <CheckboxList values={accelerators} onChange={onAccelerators} options={HIRING_ACCELERATOR_OPTIONS} />
       </FilterDropdown>

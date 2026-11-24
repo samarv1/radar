@@ -17,6 +17,11 @@ import {
 
 const PAGE_SIZE = 15;
 
+function searchCompanies(companies: Company[], query: string) {
+  const term = query.trim().toLowerCase();
+  return term ? companies.filter((company) => company.name.toLowerCase().includes(term)) : companies;
+}
+
 function getPageNumbers(page: number, totalPages: number): (number | "...")[] {
   const pages: (number | "...")[] = [];
   const addPage = (p: number) => pages.push(p);
@@ -102,6 +107,8 @@ export function FeedClient({
   const [tab, setTab] = useState<"raised" | "hiring">("raised");
   const [view, setView] = useState<"feed" | "bookmarks">("feed");
   const [raisedPage, setRaisedPage] = useState(1);
+  const [raisedQuery, setRaisedQuery] = useState("");
+  const [hiringQuery, setHiringQuery] = useState("");
   const [hiringPage, setHiringPage] = useState(1);
   const { toggle, isBookmarked } = useBookmarks();
   const isFirstRender = useRef(true);
@@ -116,7 +123,10 @@ export function FeedClient({
     setRaisedPage(1);
   }
 
-  const visible = useMemo(() => applyFilters(companies, filters), [companies, filters]);
+  const visible = useMemo(
+    () => searchCompanies(applyFilters(companies, filters), raisedQuery),
+    [companies, filters, raisedQuery],
+  );
   const recent = useMemo(() => [...visible].sort(byDateDesc), [visible]);
 
   const raisedTotalPages = Math.ceil(recent.length / PAGE_SIZE);
@@ -127,13 +137,13 @@ export function FeedClient({
 
   const filteredHiring = useMemo(
     () => applyHiringFilters(
-      hiringCompanies,
+      searchCompanies(hiringCompanies, hiringQuery),
       hiringAccelerators,
       hiringRoleTypes,
       hiringRoleLevels,
       hiringVerticals,
     ).sort(byHiringDate),
-    [hiringAccelerators, hiringCompanies, hiringRoleLevels, hiringRoleTypes, hiringVerticals],
+    [hiringAccelerators, hiringCompanies, hiringQuery, hiringRoleLevels, hiringRoleTypes, hiringVerticals],
   );
   const hiringTotalPages = Math.ceil(filteredHiring.length / PAGE_SIZE);
   const pagedHiring = useMemo(
@@ -229,11 +239,13 @@ export function FeedClient({
 
           {tab === "raised" ? (
             <>
-              <FilterBar filters={filters} onChange={handleFiltersChange} />
+              <FilterBar filters={filters} onChange={handleFiltersChange} query={raisedQuery}
+                onQueryChange={(query) => { setRaisedQuery(query); setRaisedPage(1); }}
+              />
 
               {visible.length === 0 && (
                 <p className="text-muted-foreground text-sm text-center py-12">
-                  No companies match the current filters.
+                  {raisedQuery.trim() ? "No companies match your search." : "No companies match the current filters."}
                 </p>
               )}
 
@@ -258,6 +270,8 @@ export function FeedClient({
           ) : (
             <>
               <HiringFilterBar
+                query={hiringQuery}
+                onQueryChange={(query) => { setHiringQuery(query); setHiringPage(1); }}
                 accelerators={hiringAccelerators}
                 roleTypes={hiringRoleTypes}
                 roleLevels={hiringRoleLevels}
@@ -269,7 +283,7 @@ export function FeedClient({
               />
               {filteredHiring.length === 0 ? (
                 <p className="text-muted-foreground text-sm text-center py-12">
-                  No companies match the current filters.
+                  {hiringQuery.trim() ? "No companies match your search." : "No companies match the current filters."}
                 </p>
               ) : (
                 <div>
